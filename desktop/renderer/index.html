@@ -38,6 +38,13 @@
           <span id="vision-status">Capturing</span>
           <span id="proactive-status">Nudges: 0/2</span>
         </div>
+        <div class="settings-row proactive-controls">
+          <label>Idle <input id="proactive-idle" type="number" min="10" max="240" value="45" />m</label>
+          <label>Cooldown <input id="proactive-cooldown" type="number" min="15" max="720" value="120" />m</label>
+          <label>Max/day <input id="proactive-max" type="number" min="1" max="8" value="2" /></label>
+          <label>Chance <input id="proactive-chance" type="number" min="5" max="100" value="35" />%</label>
+          <label>Quiet <input id="proactive-quiet-start" type="number" min="0" max="23" value="22" />-<input id="proactive-quiet-end" type="number" min="0" max="23" value="8" /></label>
+        </div>
       </section>
     </div>
 

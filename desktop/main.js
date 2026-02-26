@@ -104,10 +104,49 @@ class ProactiveCompanionService {
       maxPerDay: this.maxPerDay,
       minIdleMinutes: Math.round(this.minIdleMs / 60000),
       cooldownMinutes: Math.round(this.cooldownMs / 60000),
+      randomChancePercent: Math.round(this.randomChance * 100),
       randomChance: this.randomChance,
+      quietStartHour: this.quietStartHour,
+      quietEndHour: this.quietEndHour,
       quietHours: `${this.quietStartHour}:00-${this.quietEndHour}:00`,
       lastProactiveAt: this.lastProactiveAt,
     };
+  }
+
+  setConfig(config = {}) {
+    const toNumber = (value, fallback) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+    if (Object.prototype.hasOwnProperty.call(config, "minIdleMinutes")) {
+      this.minIdleMs = Math.round(clamp(toNumber(config.minIdleMinutes, 45), 10, 240) * 60000);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(config, "cooldownMinutes")) {
+      this.cooldownMs = Math.round(clamp(toNumber(config.cooldownMinutes, 120), 15, 720) * 60000);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(config, "maxPerDay")) {
+      this.maxPerDay = Math.round(clamp(toNumber(config.maxPerDay, 2), 1, 8));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(config, "randomChancePercent")) {
+      const pct = clamp(toNumber(config.randomChancePercent, 35), 5, 100);
+      this.randomChance = pct / 100;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(config, "quietStartHour")) {
+      this.quietStartHour = Math.round(clamp(toNumber(config.quietStartHour, 22), 0, 23));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(config, "quietEndHour")) {
+      this.quietEndHour = Math.round(clamp(toNumber(config.quietEndHour, 8), 0, 23));
+    }
+
+    this._notifyStatus();
+    return this.getStatus();
   }
 
   _notifyStatus() {
@@ -697,6 +736,11 @@ ipcMain.handle("overlay:get-proactive-status", () => {
 
 ipcMain.on("overlay:set-proactive", (_event, enabled) => {
   proactiveCompanion.setEnabled(enabled);
+});
+
+ipcMain.handle("overlay:set-proactive-config", (_event, config) => {
+  const payload = config && typeof config === "object" ? config : {};
+  return proactiveCompanion.setConfig(payload);
 });
 
 ipcMain.handle("overlay:get-capture-status", () => {

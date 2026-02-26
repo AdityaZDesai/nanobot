@@ -19,6 +19,7 @@ Desktop overlay includes a gentle proactive mode that checks in first when you h
 - Uses latest screenshot context when available
 - Guardrails: quiet hours, random chance, cooldown, and daily cap to avoid spam
 - Toggle in overlay with `Proactive`
+- Tune behavior in-overlay: idle minutes, cooldown, max/day, chance %, and quiet hours
 
 ## Voice output (ElevenLabs)
 
