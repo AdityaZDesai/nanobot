@@ -4,9 +4,8 @@ const { pathToFileURL } = require("url");
 
 globalThis.PIXI = PIXI;
 
-const { Live2DModel } = require("pixi-live2d-display/cubism4");
-
 const localModelPath = require.resolve("live2d-widget-model-shizuku/assets/shizuku.model.json");
+const cubism2RuntimePath = require.resolve("live2d-widget/lib/L2Dwidget.0.min.js");
 
 const modelCandidates = [
   pathToFileURL(localModelPath).href,
@@ -30,6 +29,29 @@ const canvas = document.getElementById("live2d-canvas");
 let ttsEnabled = true;
 let recognition = null;
 let model = null;
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = false;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
+    document.head.appendChild(script);
+  });
+}
+
+async function ensureCubism2Runtime() {
+  if (window.Live2D) {
+    return;
+  }
+
+  await loadScript(pathToFileURL(cubism2RuntimePath).href);
+
+  if (!window.Live2D) {
+    throw new Error("Cubism 2 runtime was loaded but window.Live2D is missing");
+  }
+}
 
 function addMessage(role, text) {
   const div = document.createElement("div");
@@ -75,6 +97,15 @@ async function sendMessage() {
 }
 
 async function loadLive2D() {
+  try {
+    await ensureCubism2Runtime();
+  } catch (err) {
+    addMessage("bot", `Failed to initialize Live2D runtime: ${String(err.message || err)}`);
+    return;
+  }
+
+  const { Live2DModel } = require("pixi-live2d-display/cubism2");
+
   const app = new PIXI.Application({
     view: canvas,
     resizeTo: canvas.parentElement,
@@ -88,12 +119,14 @@ async function loadLive2D() {
         autoInteract: true,
       });
       break;
-    } catch (_err) {
+    } catch (err) {
+      addMessage("bot", `[live2d] Failed model candidate: ${url}`);
+      addMessage("bot", `[live2d] ${String(err.message || err)}`);
     }
   }
 
   if (!model) {
-    addMessage("bot", "Failed to load Live2D model. Check internet connectivity.");
+    addMessage("bot", "Failed to load Live2D model from local assets or fallback URLs.");
     return;
   }
 
