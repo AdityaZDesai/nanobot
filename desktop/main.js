@@ -4,13 +4,18 @@ const fs = require("fs");
 const path = require("path");
 
 const ELEVENLABS_DEFAULT_VOICE_ID = "lhTvHflPVOqgSWyuWQry";
+const ELEVENLABS_DEFAULT_MODEL_ID = "eleven_v3";
+const ELEVENLABS_FALLBACK_MODEL_ID = "eleven_multilingual_v2";
 
-async function synthesizeSpeechWithElevenLabs(text) {
-  const apiKey = String(process.env.ELEVENLABS_API_KEY || "").trim();
-  if (!apiKey) {
-    throw new Error("Missing ELEVENLABS_API_KEY for ElevenLabs TTS");
+function parseElevenLabsError(rawBody) {
+  try {
+    return JSON.parse(rawBody);
+  } catch (_err) {
+    return null;
   }
+}
 
+async function requestElevenLabsSpeech({ apiKey, text, modelId }) {
   const response = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(ELEVENLABS_DEFAULT_VOICE_ID)}/stream`,
     {
@@ -22,7 +27,7 @@ async function synthesizeSpeechWithElevenLabs(text) {
       },
       body: JSON.stringify({
         text,
-        model_id: "eleven_multilingual_v3",
+        model_id: modelId,
         voice_settings: {
           stability: 0.32,
           similarity_boost: 0.85,
@@ -34,9 +39,58 @@ async function synthesizeSpeechWithElevenLabs(text) {
   );
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(`ElevenLabs TTS failed (${response.status}): ${message || response.statusText}`);
+    return {
+      ok: false,
+      status: response.status,
+      statusText: response.statusText,
+      body: await response.text(),
+      modelId,
+    };
   }
+
+  return {
+    ok: true,
+    modelId,
+    response,
+  };
+}
+
+async function synthesizeSpeechWithElevenLabs(text) {
+  const apiKey = String(process.env.ELEVENLABS_API_KEY || "").trim();
+  if (!apiKey) {
+    throw new Error("Missing ELEVENLABS_API_KEY for ElevenLabs TTS");
+  }
+
+  const configuredModel = String(process.env.ELEVENLABS_MODEL_ID || ELEVENLABS_DEFAULT_MODEL_ID).trim();
+  const primaryModel = configuredModel || ELEVENLABS_DEFAULT_MODEL_ID;
+
+  let ttsResult = await requestElevenLabsSpeech({
+    apiKey,
+    text,
+    modelId: primaryModel,
+  });
+
+  if (!ttsResult.ok) {
+    const parsed = parseElevenLabsError(ttsResult.body);
+    const modelNotFound = parsed && parsed.detail && parsed.detail.status === "model_not_found";
+    if (modelNotFound && primaryModel !== ELEVENLABS_FALLBACK_MODEL_ID) {
+      ttsResult = await requestElevenLabsSpeech({
+        apiKey,
+        text,
+        modelId: ELEVENLABS_FALLBACK_MODEL_ID,
+      });
+    }
+  }
+
+  if (!ttsResult.ok) {
+    const message = ttsResult.body || ttsResult.statusText;
+    throw new Error(
+      `ElevenLabs TTS failed (${ttsResult.status}) with model '${ttsResult.modelId}': ${message}. ` +
+      "Set ELEVENLABS_MODEL_ID to a model your account can access."
+    );
+  }
+
+  const response = ttsResult.response;
 
   const audioBuffer = Buffer.from(await response.arrayBuffer());
   if (!audioBuffer.length) {
