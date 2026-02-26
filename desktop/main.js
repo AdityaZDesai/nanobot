@@ -52,6 +52,161 @@ async function synthesizeSpeechWithElevenLabs(text) {
 let mainWindow = null;
 let tray = null;
 
+class ProactiveCompanionService {
+  constructor({ backendBridge, screenCaptureService }) {
+    this.backend = backendBridge;
+    this.screenCapture = screenCaptureService;
+    this.enabled = true;
+    this.tickMs = 3 * 60 * 1000;
+    this.minIdleMs = 45 * 60 * 1000;
+    this.cooldownMs = 2 * 60 * 60 * 1000;
+    this.maxPerDay = 2;
+    this.randomChance = 0.35;
+    this.quietStartHour = 22;
+    this.quietEndHour = 8;
+    this.lastUserActivityAt = Date.now();
+    this.lastProactiveAt = null;
+    this.sentToday = 0;
+    this.dayKey = this._dayKey(new Date());
+    this.timer = null;
+    this.inFlight = false;
+  }
+
+  start() {
+    if (this.timer) {
+      return;
+    }
+    this.timer = setInterval(() => {
+      void this._tick();
+    }, this.tickMs);
+  }
+
+  stop() {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  markUserActivity() {
+    this.lastUserActivityAt = Date.now();
+  }
+
+  setEnabled(enabled) {
+    this.enabled = Boolean(enabled);
+    this._notifyStatus();
+  }
+
+  getStatus() {
+    return {
+      enabled: this.enabled,
+      sentToday: this.sentToday,
+      maxPerDay: this.maxPerDay,
+      minIdleMinutes: Math.round(this.minIdleMs / 60000),
+      cooldownMinutes: Math.round(this.cooldownMs / 60000),
+      randomChance: this.randomChance,
+      quietHours: `${this.quietStartHour}:00-${this.quietEndHour}:00`,
+      lastProactiveAt: this.lastProactiveAt,
+    };
+  }
+
+  _notifyStatus() {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("proactive:status", this.getStatus());
+    }
+  }
+
+  _dayKey(now) {
+    return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+  }
+
+  _isQuietHours(now) {
+    const hour = now.getHours();
+    if (this.quietStartHour < this.quietEndHour) {
+      return hour >= this.quietStartHour && hour < this.quietEndHour;
+    }
+    return hour >= this.quietStartHour || hour < this.quietEndHour;
+  }
+
+  _shouldSend(now) {
+    if (!this.enabled || this.inFlight) {
+      return false;
+    }
+
+    const key = this._dayKey(now);
+    if (key !== this.dayKey) {
+      this.dayKey = key;
+      this.sentToday = 0;
+    }
+
+    if (this.sentToday >= this.maxPerDay) {
+      return false;
+    }
+    if (this._isQuietHours(now)) {
+      return false;
+    }
+
+    const nowMs = now.getTime();
+    if ((nowMs - this.lastUserActivityAt) < this.minIdleMs) {
+      return false;
+    }
+
+    if (this.lastProactiveAt && (nowMs - this.lastProactiveAt) < this.cooldownMs) {
+      return false;
+    }
+
+    return Math.random() < this.randomChance;
+  }
+
+  async _tick() {
+    const now = new Date();
+    if (!this._shouldSend(now)) {
+      return;
+    }
+
+    this.inFlight = true;
+    try {
+      const media = [];
+      if (this.screenCapture.enabled) {
+        await this.screenCapture.captureNow();
+        if (this.screenCapture.latestCapturePath) {
+          media.push(this.screenCapture.latestCapturePath);
+        }
+      }
+
+      const idleMinutes = Math.round((Date.now() - this.lastUserActivityAt) / 60000);
+      const payload = await this.backend.request("proactive", {
+        session: "overlay:default",
+        media,
+        idle_minutes: idleMinutes,
+        local_time: now.toLocaleString(),
+      });
+
+      const text = String(payload && payload.text ? payload.text : "").trim();
+      if (!text) {
+        return;
+      }
+
+      this.lastProactiveAt = Date.now();
+      this.sentToday += 1;
+      this._notifyStatus();
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("overlay:proactive-message", {
+          text,
+          timestamp: this.lastProactiveAt,
+        });
+      }
+    } catch (err) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("backend:log", `Proactive nudge failed: ${String(err.message || err)}`);
+      }
+    } finally {
+      this.inFlight = false;
+    }
+  }
+}
+
 class ScreenCaptureService {
   constructor() {
     this.enabled = true;
@@ -394,6 +549,10 @@ class BackendBridge {
 
 const backend = new BackendBridge();
 const screenCapture = new ScreenCaptureService();
+const proactiveCompanion = new ProactiveCompanionService({
+  backendBridge: backend,
+  screenCaptureService: screenCapture,
+});
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -449,6 +608,7 @@ app.whenReady().then(() => {
   createTray();
   backend.start();
   screenCapture.start();
+  proactiveCompanion.start();
 
   globalShortcut.register("CommandOrControl+Shift+O", () => {
     if (!mainWindow) return;
@@ -474,6 +634,7 @@ app.on("activate", () => {
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  proactiveCompanion.stop();
   screenCapture.stop();
   backend.stop();
 });
@@ -499,7 +660,16 @@ ipcMain.handle("overlay:send", async (_event, requestPayload) => {
     session: "overlay:default",
     media,
   });
+  proactiveCompanion.markUserActivity();
   return responsePayload.text || "";
+});
+
+ipcMain.handle("overlay:get-proactive-status", () => {
+  return proactiveCompanion.getStatus();
+});
+
+ipcMain.on("overlay:set-proactive", (_event, enabled) => {
+  proactiveCompanion.setEnabled(enabled);
 });
 
 ipcMain.handle("overlay:get-capture-status", () => {

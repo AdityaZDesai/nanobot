@@ -109,6 +109,37 @@ class DesktopBridge:
             response = await self.agent_loop.process_direct(text, session, media=media)
             return {"text": response or ""}
 
+        if request.req_type == "proactive":
+            if not self.agent_loop:
+                raise RuntimeError("Bridge backend is not initialized")
+
+            session = str(request.payload.get("session", "overlay:default"))
+            idle_minutes = int(request.payload.get("idle_minutes") or 0)
+            local_time = str(request.payload.get("local_time") or "")
+            raw_media = request.payload.get("media") or []
+            media = (
+                [str(item) for item in raw_media if isinstance(item, str)]
+                if isinstance(raw_media, list)
+                else []
+            )
+
+            proactive_prompt = (
+                "You are proactively checking in with the user in desktop overlay mode. "
+                "Create exactly one short, natural, non-annoying message (max 2 sentences) that is warm and productive. "
+                "If screenshots are attached, ground your message in visible context and suggest one small next step. "
+                "Do not sound robotic, do not guilt-trip, and do not send generic spammy motivation. "
+                "Do not mention screenshots unless it helps the suggestion feel natural. "
+                "If there is no meaningful, useful nudge right now, reply exactly with __SKIP__. "
+                f"The user has been idle for about {idle_minutes} minutes. "
+                f"Local time: {local_time or 'unknown'}."
+            )
+
+            response = await self.agent_loop.process_direct(proactive_prompt, session, media=media)
+            text = (response or "").strip()
+            if text == "__SKIP__":
+                return {"text": ""}
+            return {"text": text}
+
         raise ValueError(f"Unsupported request type: {request.req_type}")
 
 

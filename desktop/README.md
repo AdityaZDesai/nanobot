@@ -11,6 +11,15 @@ the latest frame to each chat message so nanobot can "see" your screen.
 - Change interval (2-60 seconds) with `Every Ns`
 - On macOS, grant **Screen Recording** permission to Electron/Nanobot Overlay
 
+## Proactive desktop nudges
+
+Desktop overlay includes a gentle proactive mode that checks in first when you have been idle.
+
+- Desktop-only (no proactive DMs to Telegram/Discord)
+- Uses latest screenshot context when available
+- Guardrails: quiet hours, random chance, cooldown, and daily cap to avoid spam
+- Toggle in overlay with `Proactive`
+
 ## Voice output (ElevenLabs)
 
 The overlay uses ElevenLabs TTS only (no browser speech fallback).

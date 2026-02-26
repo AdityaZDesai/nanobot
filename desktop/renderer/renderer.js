@@ -22,8 +22,10 @@ const clickThroughEl = document.getElementById("click-through");
 const pinTopEl = document.getElementById("pin-top");
 const opacityEl = document.getElementById("opacity");
 const visionEnabledEl = document.getElementById("vision-enabled");
+const proactiveEnabledEl = document.getElementById("proactive-enabled");
 const captureIntervalEl = document.getElementById("capture-interval");
 const visionStatusEl = document.getElementById("vision-status");
+const proactiveStatusEl = document.getElementById("proactive-status");
 const canvas = document.getElementById("live2d-canvas");
 
 let ttsEnabled = true;
@@ -54,6 +56,14 @@ async function ensureCubism2Runtime() {
 function addMessage(role, text) {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
+  div.textContent = text;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function addSystemMessage(text) {
+  const div = document.createElement("div");
+  div.className = "msg system";
   div.textContent = text;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -238,6 +248,10 @@ captureIntervalEl.addEventListener("change", () => {
   ipcRenderer.send("overlay:set-capture-interval", seconds);
 });
 
+proactiveEnabledEl.addEventListener("change", () => {
+  ipcRenderer.send("overlay:set-proactive", proactiveEnabledEl.checked);
+});
+
 function updateVisionStatus(status) {
   if (!status) {
     visionStatusEl.textContent = "Unknown";
@@ -259,6 +273,15 @@ function updateVisionStatus(status) {
   }
 }
 
+function updateProactiveStatus(status) {
+  if (!status) {
+    proactiveStatusEl.textContent = "Nudges: ?";
+    return;
+  }
+  proactiveEnabledEl.checked = Boolean(status.enabled);
+  proactiveStatusEl.textContent = `Nudges: ${Number(status.sentToday || 0)}/${Number(status.maxPerDay || 0)}`;
+}
+
 ipcRenderer.on("backend:ready", () => {
   addMessage("bot", "Nanobot overlay is ready.");
 });
@@ -275,12 +298,38 @@ ipcRenderer.on("screen-capture:status", (_event, status) => {
   updateVisionStatus(status);
 });
 
+ipcRenderer.on("proactive:status", (_event, status) => {
+  updateProactiveStatus(status);
+});
+
+ipcRenderer.on("overlay:proactive-message", async (_event, payload) => {
+  const text = String(payload && payload.text ? payload.text : "").trim();
+  if (!text) {
+    return;
+  }
+  addSystemMessage("Luna checked in");
+  addMessage("bot", text);
+  try {
+    await speak(text);
+  } catch (err) {
+    addMessage("bot", `[tts] ${String(err.message || err)}`);
+  }
+});
+
 ipcRenderer.invoke("overlay:get-capture-status")
   .then((status) => {
     updateVisionStatus(status);
   })
   .catch(() => {
     updateVisionStatus(null);
+  });
+
+ipcRenderer.invoke("overlay:get-proactive-status")
+  .then((status) => {
+    updateProactiveStatus(status);
+  })
+  .catch(() => {
+    updateProactiveStatus(null);
   });
 
 setupVoiceInput();
