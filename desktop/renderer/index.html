@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nanobot Overlay</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="overlay-root">
+      <header class="topbar">
+        <div class="drag-handle">Nanobot Overlay</div>
+        <div class="topbar-controls">
+          <label class="toggle"><input id="pin-top" type="checkbox" checked />Pin</label>
+          <label class="toggle"><input id="click-through" type="checkbox" />Pass-through</label>
+        </div>
+      </header>
+
+      <main class="character-area">
+        <canvas id="live2d-canvas"></canvas>
+      </main>
+
+      <section class="chat-panel" id="chat-panel">
+        <div id="messages" class="messages"></div>
+        <div class="composer">
+          <textarea id="input" rows="2" placeholder="Talk to nanobot..."></textarea>
+          <div class="actions">
+            <button id="voice-in" title="Voice input">Mic</button>
+            <button id="voice-out" title="Toggle TTS">Voice</button>
+            <button id="send">Send</button>
+          </div>
+        </div>
+        <div class="settings-row">
+          <label>Opacity <input id="opacity" type="range" min="25" max="100" value="100" /></label>
+        </div>
+      </section>
+    </div>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>

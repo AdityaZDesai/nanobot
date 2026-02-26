@@ -158,6 +158,33 @@ nanobot agent
 
 That's it! You have a working AI assistant in 2 minutes.
 
+## 🪟 Desktop Overlay App (Live2D)
+
+nanobot now includes a desktop overlay shell under `desktop/` with:
+
+- Always-on-top transparent overlay window
+- Live2D anime character
+- Text chat and voice input/output
+- Installer builds for macOS/Windows/Linux via Electron Builder
+
+Quick start:
+
+```bash
+cd desktop
+npm install
+npm run dev
+```
+
+Build installers:
+
+```bash
+cd desktop
+npm run build
+```
+
+By default the app starts the backend with `python3 -m nanobot.desktop_bridge` (or `python` on Windows).
+Set `NANOBOT_PYTHON` if you need a specific Python executable.
+
 ## 💬 Chat Apps
 
 Connect nanobot to your favorite chat platform.

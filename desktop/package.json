@@ -1,0 +1,50 @@
+{
+  "name": "nanobot-overlay",
+  "version": "0.1.0",
+  "description": "Always-on-top Live2D overlay desktop app for nanobot",
+  "main": "main.js",
+  "author": "nanobot contributors",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron .",
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "dependencies": {
+    "pixi-live2d-display": "^0.4.0",
+    "pixi.js": "^8.4.1"
+  },
+  "devDependencies": {
+    "electron": "^32.2.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "ai.nanobot.overlay",
+    "productName": "Nanobot Overlay",
+    "files": [
+      "main.js",
+      "renderer/**/*",
+      "node_modules/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility"
+    }
+  }
+}
