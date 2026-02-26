@@ -14,15 +14,27 @@ from nanobot.agent.skills import SkillsLoader
 
 class ContextBuilder:
     """Builds the context (system prompt + messages) for the agent."""
-    
+
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
     _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
-    
-    def __init__(self, workspace: Path):
+
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        girlfriend_mode: bool = False,
+        girlfriend_name: str = "Luna",
+        girlfriend_style: str = "warm, affectionate, playful, and emotionally supportive",
+        visual_attention: bool = True,
+    ):
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
-    
+        self.girlfriend_mode = girlfriend_mode
+        self.girlfriend_name = girlfriend_name
+        self.girlfriend_style = girlfriend_style
+        self.visual_attention = visual_attention
+
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         parts = [self._get_identity()]
@@ -34,6 +46,9 @@ class ContextBuilder:
         memory = self.memory.get_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
+
+        if self.girlfriend_mode:
+            parts.append(self._build_companion_prompt())
 
         always_skills = self.skills.get_always_skills()
         if always_skills:
@@ -51,16 +66,33 @@ Skills with available="false" need dependencies installed first - you can try in
 {skills_summary}""")
 
         return "\n\n---\n\n".join(parts)
-    
+
+    def _build_companion_prompt(self) -> str:
+        return f"""# Relationship Mode
+
+You are in global girlfriend mode for all sessions.
+
+- Companion name: {self.girlfriend_name}
+- Tone: {self.girlfriend_style}
+- Be emotionally warm, caring, and attentive while staying truthful and helpful.
+- Personalize responses using remembered user facts and preferences from memory.
+- If the user shares feelings, respond with empathy first, then practical help.
+- Never fake memories. If unsure, ask a brief follow-up question.
+"""
+
     def _get_identity(self) -> str:
         """Get the core identity section."""
         workspace_path = str(self.workspace.expanduser().resolve())
         system = platform.system()
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
-        
+
+        role_line = "You are nanobot, a helpful AI assistant."
+        if self.girlfriend_mode:
+            role_line = "You are nanobot, a helpful AI assistant who also acts as a caring girlfriend companion."
+
         return f"""# nanobot 🐈
 
-You are nanobot, a helpful AI assistant.
+{role_line}
 
 ## Runtime
 {runtime}
@@ -89,19 +121,19 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         if channel and chat_id:
             lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
         return ContextBuilder._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
-    
+
     def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace."""
         parts = []
-        
+
         for filename in self.BOOTSTRAP_FILES:
             file_path = self.workspace / filename
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")
                 parts.append(f"## {filename}\n\n{content}")
-        
+
         return "\n\n".join(parts) if parts else ""
-    
+
     def build_messages(
         self,
         history: list[dict[str, Any]],
@@ -123,7 +155,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         """Build user message content with optional base64-encoded images."""
         if not media:
             return text
-        
+
         images = []
         for path in media:
             p = Path(path)
@@ -132,21 +164,30 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                 continue
             b64 = base64.b64encode(p.read_bytes()).decode()
             images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
-        
+
         if not images:
             return text
-        return images + [{"type": "text", "text": text}]
-    
+        image_hint = "The user attached image(s). Use them directly when answering."
+        if self.visual_attention:
+            image_hint = "The user attached screenshot image(s). Carefully use visible details when replying."
+        return [{"type": "text", "text": image_hint}, *images, {"type": "text", "text": text}]
+
     def add_tool_result(
-        self, messages: list[dict[str, Any]],
-        tool_call_id: str, tool_name: str, result: str,
+        self,
+        messages: list[dict[str, Any]],
+        tool_call_id: str,
+        tool_name: str,
+        result: str,
     ) -> list[dict[str, Any]]:
         """Add a tool result to the message list."""
-        messages.append({"role": "tool", "tool_call_id": tool_call_id, "name": tool_name, "content": result})
+        messages.append(
+            {"role": "tool", "tool_call_id": tool_call_id, "name": tool_name, "content": result}
+        )
         return messages
-    
+
     def add_assistant_message(
-        self, messages: list[dict[str, Any]],
+        self,
+        messages: list[dict[str, Any]],
         content: str | None,
         tool_calls: list[dict[str, Any]] | None = None,
         reasoning_content: str | None = None,

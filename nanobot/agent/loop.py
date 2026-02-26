@@ -60,6 +60,11 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        girlfriend_mode: bool = True,
+        girlfriend_name: str = "Luna",
+        girlfriend_style: str = "warm, affectionate, playful, and emotionally supportive",
+        remember_user_details: bool = True,
+        visual_attention: bool = True,
     ):
         from nanobot.config.schema import ExecToolConfig
 
@@ -76,8 +81,19 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
+        self.girlfriend_mode = girlfriend_mode
+        self.girlfriend_name = girlfriend_name
+        self.girlfriend_style = girlfriend_style
+        self.remember_user_details = remember_user_details
+        self.visual_attention = visual_attention
 
-        self.context = ContextBuilder(workspace)
+        self.context = ContextBuilder(
+            workspace,
+            girlfriend_mode=girlfriend_mode,
+            girlfriend_name=girlfriend_name,
+            girlfriend_style=girlfriend_style,
+            visual_attention=visual_attention,
+        )
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -456,6 +472,11 @@ class AgentLoop:
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
 
+        if self.girlfriend_mode and self.remember_user_details:
+            captured = MemoryStore(self.workspace).capture_from_user_message(msg.content)
+            if captured:
+                logger.debug("Captured {} user fact(s) for memory", captured)
+
         history = session.get_history(max_messages=self.memory_window)
         initial_messages = self.context.build_messages(
             history=history,
@@ -537,6 +558,7 @@ class AgentLoop:
             self.model,
             archive_all=archive_all,
             memory_window=self.memory_window,
+            girlfriend_mode=self.girlfriend_mode,
         )
 
     async def process_direct(
