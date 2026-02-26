@@ -166,17 +166,71 @@ class BackendBridge {
     this.reqSeq = 0;
   }
 
+  _resolvePython(backendCwd) {
+    const envPython = String(process.env.NANOBOT_PYTHON || "").trim();
+    if (envPython) {
+      return {
+        command: envPython,
+        extraArgs: [],
+        source: "NANOBOT_PYTHON",
+      };
+    }
+
+    const venvCandidates = process.platform === "win32"
+      ? [
+        path.join(backendCwd, "venv", "Scripts", "python.exe"),
+        path.join(backendCwd, ".venv", "Scripts", "python.exe"),
+      ]
+      : [
+        path.join(backendCwd, "venv", "bin", "python"),
+        path.join(backendCwd, ".venv", "bin", "python"),
+      ];
+
+    for (const candidate of venvCandidates) {
+      if (fs.existsSync(candidate)) {
+        return {
+          command: candidate,
+          extraArgs: [],
+          source: `local venv (${path.relative(backendCwd, candidate) || candidate})`,
+        };
+      }
+    }
+
+    if (process.platform === "win32") {
+      return {
+        command: "py",
+        extraArgs: ["-3"],
+        source: "py -3 fallback",
+      };
+    }
+
+    return {
+      command: "python3",
+      extraArgs: [],
+      source: "python3 fallback",
+    };
+  }
+
+  _logToOverlay(text) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("backend:log", text);
+    }
+  }
+
   start() {
     if (this.child) {
       return;
     }
 
-    const python = process.env.NANOBOT_PYTHON || (process.platform === "win32" ? "python" : "python3");
-    const args = ["-m", "nanobot.desktop_bridge"];
-
     const backendCwd = process.env.NANOBOT_BACKEND_CWD || path.resolve(__dirname, "..");
+    const python = this._resolvePython(backendCwd);
+    const args = [...python.extraArgs, "-m", "nanobot.desktop_bridge"];
 
-    this.child = spawn(python, args, {
+    this._logToOverlay(
+      `Starting backend with ${python.command} ${args.join(" ")} (source: ${python.source}, cwd: ${backendCwd})`
+    );
+
+    this.child = spawn(python.command, args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
       cwd: backendCwd,
@@ -185,9 +239,19 @@ class BackendBridge {
     this.child.stdout.on("data", (chunk) => this._onStdout(chunk.toString("utf8")));
     this.child.stderr.on("data", (chunk) => {
       const text = chunk.toString("utf8").trim();
-      if (text && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("backend:log", text);
+      if (text) {
+        this._logToOverlay(text);
       }
+    });
+
+    this.child.on("error", (err) => {
+      const message = `Backend process failed to start: ${String(err.message || err)}`;
+      this._logToOverlay(message);
+      for (const [, reject] of this.pending.values()) {
+        reject(new Error(message));
+      }
+      this.pending.clear();
+      this.child = null;
     });
 
     this.child.on("exit", (code) => {

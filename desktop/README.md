@@ -33,6 +33,20 @@ NANOBOT_PYTHON=/usr/bin/python3 npm run dev
 
 If your backend code is not in the parent directory of `desktop/`, set `NANOBOT_BACKEND_CWD`.
 
+Python executable resolution order used by the desktop app:
+
+1. `NANOBOT_PYTHON` (if set)
+2. `venv/bin/python` (or `venv\\Scripts\\python.exe` on Windows) in backend cwd
+3. `.venv/bin/python` (or `.venv\\Scripts\\python.exe` on Windows) in backend cwd
+4. System fallback (`python3` on macOS/Linux, `py -3` on Windows)
+
+If messages do not send and you see backend startup errors, set the interpreter explicitly:
+
+```bash
+cd desktop
+NANOBOT_PYTHON=../venv/bin/python npm run dev
+```
+
 ## Build installers
 
 ```bash
