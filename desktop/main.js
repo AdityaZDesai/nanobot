@@ -23,6 +23,12 @@ async function synthesizeSpeechWithElevenLabs(text) {
       body: JSON.stringify({
         text,
         model_id: "eleven_multilingual_v3",
+        voice_settings: {
+          stability: 0.32,
+          similarity_boost: 0.85,
+          style: 0.55,
+          use_speaker_boost: true,
+        },
       }),
     }
   );
