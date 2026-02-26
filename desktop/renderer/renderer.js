@@ -1,11 +1,15 @@
 const { ipcRenderer } = require("electron");
 const PIXI = require("pixi.js");
+const { pathToFileURL } = require("url");
 
 globalThis.PIXI = PIXI;
 
 const { Live2DModel } = require("pixi-live2d-display/cubism4");
 
+const localModelPath = require.resolve("live2d-widget-model-shizuku/assets/shizuku.model.json");
+
 const modelCandidates = [
+  pathToFileURL(localModelPath).href,
   "https://unpkg.com/live2d-widget-model-shizuku@1.0.5/assets/shizuku.model.json",
   "https://unpkg.com/live2d-widget-model-haru@1.0.5/assets/haru01.model.json",
 ];
