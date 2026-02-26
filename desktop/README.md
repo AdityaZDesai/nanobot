@@ -43,6 +43,8 @@ Desktop voice input now records microphone audio directly and transcribes it wit
 
 - Set `GROQ_API_KEY` before starting the app
 - Click `Mic` to start recording, then click `Stop` to transcribe and send
+- Keyboard shortcut: `Cmd/Ctrl + Shift + M` toggles voice recording
+- Wake word required: start your speech with `babe` (for example: `babe open my todo list`)
 - On macOS, grant **Microphone** permission for Nanobot Overlay
 
 Example:

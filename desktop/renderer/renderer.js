@@ -42,6 +42,8 @@ let mediaRecorder = null;
 let mediaStream = null;
 let isRecording = false;
 let recorderChunks = [];
+const WAKE_WORD = "babe";
+const WAKE_WORD_PREFIX = /^(?:hey\s+)?babe\b[\s,:;.!?-]*/i;
 
 async function ensureCubism2Runtime() {
   if (window.Live2D && window.Live2DModelWebGL) {
@@ -249,6 +251,19 @@ async function transcribeVoice(blob, mimeType) {
   return { text, error };
 }
 
+function extractCommandFromWakeWord(transcript) {
+  const original = String(transcript || "").trim();
+  if (!original) {
+    return null;
+  }
+
+  if (!WAKE_WORD_PREFIX.test(original)) {
+    return null;
+  }
+
+  return original.replace(WAKE_WORD_PREFIX, "").trim();
+}
+
 async function startVoiceRecording() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
     addMessage("bot", "[voice] Mic recording is not supported in this environment.");
@@ -299,7 +314,7 @@ inputEl.addEventListener("keydown", (event) => {
   }
 });
 
-voiceInBtn.addEventListener("click", () => {
+function toggleVoiceRecording() {
   if (isRecording) {
     stopVoiceRecording()
       .then(async (result) => {
@@ -310,7 +325,17 @@ voiceInBtn.addEventListener("click", () => {
         voiceInBtn.textContent = "Transcribing";
         const transcription = await transcribeVoice(result.blob, result.mimeType);
         if (transcription.text) {
-          inputEl.value = transcription.text;
+          const command = extractCommandFromWakeWord(transcription.text);
+          if (command === null) {
+            addMessage("bot", `[voice] Say \"${WAKE_WORD}\" first to activate voice command.`);
+            return;
+          }
+          if (!command) {
+            addMessage("bot", `[voice] Wake word heard. Say a command after \"${WAKE_WORD}\".`);
+            return;
+          }
+
+          inputEl.value = command;
           await sendMessage();
         } else if (transcription.error) {
           addMessage("bot", `[voice] ${transcription.error}`);
@@ -341,6 +366,12 @@ voiceInBtn.addEventListener("click", () => {
     .finally(() => {
       voiceInBtn.disabled = false;
     });
+}
+
+voiceInBtn.addEventListener("click", toggleVoiceRecording);
+
+ipcRenderer.on("overlay:voice-shortcut", () => {
+  toggleVoiceRecording();
 });
 
 voiceOutBtn.addEventListener("click", () => {

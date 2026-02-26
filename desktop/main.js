@@ -19,7 +19,7 @@ async function requestElevenLabsSpeech({ apiKey, text, modelId }) {
   const voiceSettings =
     modelId === ELEVENLABS_FALLBACK_MODEL_ID
       ? {
-        stability: 0.32,
+        stability: 0.5,
         similarity_boost: 0.85,
         style: 0.55,
         use_speaker_boost: true,
@@ -742,6 +742,16 @@ app.whenReady().then(() => {
       mainWindow.show();
       mainWindow.focus();
     }
+  });
+
+  globalShortcut.register("CommandOrControl+Shift+M", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+    if (!mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+    mainWindow.webContents.send("overlay:voice-shortcut");
   });
 });
 
