@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, nativeImage, desktopCapturer, screen } = require("electron");
+const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, nativeImage, desktopCapturer, screen, systemPreferences, session } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
@@ -604,6 +604,33 @@ function createTray() {
 }
 
 app.whenReady().then(() => {
+  const defaultSession = session.defaultSession;
+  defaultSession.setPermissionCheckHandler((_webContents, permission) => {
+    if (permission === "media" || permission === "audioCapture") {
+      if (process.platform === "darwin") {
+        return systemPreferences.getMediaAccessStatus("microphone") === "granted";
+      }
+      return true;
+    }
+    return true;
+  });
+
+  defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === "media" || permission === "audioCapture") {
+      if (process.platform !== "darwin") {
+        callback(true);
+        return;
+      }
+
+      systemPreferences.askForMediaAccess("microphone")
+        .then((granted) => callback(Boolean(granted)))
+        .catch(() => callback(false));
+      return;
+    }
+
+    callback(true);
+  });
+
   createWindow();
   createTray();
   backend.start();
@@ -682,6 +709,41 @@ ipcMain.handle("overlay:tts", async (_event, text) => {
     return null;
   }
   return synthesizeSpeechWithElevenLabs(content);
+});
+
+ipcMain.handle("overlay:ensure-mic-permission", async () => {
+  if (process.platform !== "darwin") {
+    return { granted: true, status: "granted" };
+  }
+
+  const status = systemPreferences.getMediaAccessStatus("microphone");
+  if (status === "granted") {
+    return { granted: true, status };
+  }
+
+  const granted = await systemPreferences.askForMediaAccess("microphone");
+  const nextStatus = systemPreferences.getMediaAccessStatus("microphone");
+  return { granted: Boolean(granted), status: nextStatus };
+});
+
+ipcMain.handle("overlay:transcribe-audio", async (_event, payload) => {
+  const body = payload && typeof payload === "object" ? payload : {};
+  const audioBase64 = String(body.audioBase64 || "").trim();
+  const mimeType = String(body.mimeType || "audio/webm").trim();
+  if (!audioBase64) {
+    return { text: "" };
+  }
+
+  const responsePayload = await backend.request("transcribe", {
+    audio_base64: audioBase64,
+    mime_type: mimeType,
+    session: "overlay:default",
+  });
+  proactiveCompanion.markUserActivity();
+  return {
+    text: String(responsePayload && responsePayload.text ? responsePayload.text : ""),
+    error: responsePayload && responsePayload.error ? String(responsePayload.error) : "",
+  };
 });
 
 ipcMain.on("overlay:set-background-vision", (_event, enabled) => {

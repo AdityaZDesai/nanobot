@@ -35,6 +35,21 @@ cd desktop
 ELEVENLABS_API_KEY=your_key_here npm run dev
 ```
 
+## Voice input (Groq Whisper)
+
+Desktop voice input now records microphone audio directly and transcribes it with Groq Whisper.
+
+- Set `GROQ_API_KEY` before starting the app
+- Click `Mic` to start recording, then click `Stop` to transcribe and send
+- On macOS, grant **Microphone** permission for Nanobot Overlay
+
+Example:
+
+```bash
+cd desktop
+GROQ_API_KEY=your_key_here ELEVENLABS_API_KEY=your_key_here npm run dev
+```
+
 ## Requirements
 
 - Node.js 20+

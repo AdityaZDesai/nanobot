@@ -29,10 +29,13 @@ const proactiveStatusEl = document.getElementById("proactive-status");
 const canvas = document.getElementById("live2d-canvas");
 
 let ttsEnabled = true;
-let recognition = null;
 let model = null;
 let currentAudio = null;
 let currentAudioUrl = null;
+let mediaRecorder = null;
+let mediaStream = null;
+let isRecording = false;
+let recorderChunks = [];
 
 async function ensureCubism2Runtime() {
   if (window.Live2D && window.Live2DModelWebGL) {
@@ -180,27 +183,106 @@ async function loadLive2D() {
   window.addEventListener("resize", fitModel);
 }
 
-function setupVoiceInput() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    voiceInBtn.disabled = true;
-    voiceInBtn.textContent = "No Mic";
+function getSupportedMimeType() {
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/ogg",
+  ];
+  for (const type of candidates) {
+    if (MediaRecorder.isTypeSupported(type)) {
+      return type;
+    }
+  }
+  return "";
+}
+
+function stopMicStream() {
+  if (mediaStream) {
+    for (const track of mediaStream.getTracks()) {
+      track.stop();
+    }
+    mediaStream = null;
+  }
+}
+
+async function stopVoiceRecording() {
+  if (!mediaRecorder || mediaRecorder.state !== "recording") {
+    return null;
+  }
+
+  voiceInBtn.disabled = true;
+  voiceInBtn.textContent = "...";
+
+  return new Promise((resolve) => {
+    mediaRecorder.onstop = () => {
+      const mimeType = mediaRecorder.mimeType || "audio/webm";
+      const blob = new Blob(recorderChunks, { type: mimeType });
+      recorderChunks = [];
+      mediaRecorder = null;
+      isRecording = false;
+      stopMicStream();
+      resolve({ blob, mimeType });
+    };
+    mediaRecorder.stop();
+  });
+}
+
+async function transcribeVoice(blob, mimeType) {
+  const buffer = await blob.arrayBuffer();
+  const audioBase64 = Buffer.from(buffer).toString("base64");
+
+  const payload = await ipcRenderer.invoke("overlay:transcribe-audio", {
+    audioBase64,
+    mimeType,
+  });
+
+  const text = String(payload && payload.text ? payload.text : "").trim();
+  const error = String(payload && payload.error ? payload.error : "").trim();
+  return { text, error };
+}
+
+async function startVoiceRecording() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+    addMessage("bot", "[voice] Mic recording is not supported in this environment.");
     return;
   }
 
-  recognition = new SR();
-  recognition.lang = "en-US";
-  recognition.interimResults = false;
-
-  recognition.onresult = (event) => {
-    const transcript = event.results[0][0].transcript;
-    inputEl.value = transcript;
-    sendMessage();
-  };
-
-  recognition.onend = () => {
+  const permission = await ipcRenderer.invoke("overlay:ensure-mic-permission");
+  if (!permission || !permission.granted) {
+    addMessage("bot", "[voice] Microphone permission denied. Enable it in macOS Settings > Privacy & Security > Microphone.");
     voiceInBtn.textContent = "Mic";
+    return;
+  }
+
+  const mimeType = getSupportedMimeType();
+  if (!mimeType) {
+    addMessage("bot", "[voice] No supported audio recording format was found.");
+    return;
+  }
+
+  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
+  recorderChunks = [];
+
+  mediaRecorder.ondataavailable = (event) => {
+    if (event.data && event.data.size > 0) {
+      recorderChunks.push(event.data);
+    }
   };
+
+  mediaRecorder.onerror = () => {
+    addMessage("bot", "[voice] Recording failed. Please try again.");
+    isRecording = false;
+    voiceInBtn.textContent = "Mic";
+    voiceInBtn.disabled = false;
+    stopMicStream();
+  };
+
+  mediaRecorder.start();
+  isRecording = true;
+  voiceInBtn.textContent = "Stop";
 }
 
 sendBtn.addEventListener("click", sendMessage);
@@ -212,11 +294,47 @@ inputEl.addEventListener("keydown", (event) => {
 });
 
 voiceInBtn.addEventListener("click", () => {
-  if (!recognition) {
+  if (isRecording) {
+    stopVoiceRecording()
+      .then(async (result) => {
+        if (!result || !result.blob || result.blob.size === 0) {
+          return;
+        }
+
+        voiceInBtn.textContent = "Transcribing";
+        const transcription = await transcribeVoice(result.blob, result.mimeType);
+        if (transcription.text) {
+          inputEl.value = transcription.text;
+          await sendMessage();
+        } else if (transcription.error) {
+          addMessage("bot", `[voice] ${transcription.error}`);
+        } else {
+          addMessage("bot", "[voice] No speech detected.");
+        }
+      })
+      .catch((err) => {
+        addMessage("bot", `[voice] ${String(err.message || err)}`);
+      })
+      .finally(() => {
+        isRecording = false;
+        voiceInBtn.textContent = "Mic";
+        voiceInBtn.disabled = false;
+      });
     return;
   }
+
+  voiceInBtn.disabled = true;
   voiceInBtn.textContent = "...";
-  recognition.start();
+  startVoiceRecording()
+    .catch((err) => {
+      addMessage("bot", `[voice] ${String(err.message || err)}`);
+      stopMicStream();
+      isRecording = false;
+      voiceInBtn.textContent = "Mic";
+    })
+    .finally(() => {
+      voiceInBtn.disabled = false;
+    });
 });
 
 voiceOutBtn.addEventListener("click", () => {
@@ -332,5 +450,4 @@ ipcRenderer.invoke("overlay:get-proactive-status")
     updateProactiveStatus(null);
   });
 
-setupVoiceInput();
 loadLive2D();

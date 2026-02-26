@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import sys
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -139,6 +142,51 @@ class DesktopBridge:
             if text == "__SKIP__":
                 return {"text": ""}
             return {"text": text}
+
+        if request.req_type == "transcribe":
+            audio_base64 = str(request.payload.get("audio_base64", "")).strip()
+            mime_type = str(request.payload.get("mime_type", "audio/webm")).strip().lower()
+            if not audio_base64:
+                return {"text": "", "error": "No audio payload provided"}
+
+            ext_map = {
+                "audio/webm": ".webm",
+                "audio/ogg": ".ogg",
+                "audio/mp4": ".m4a",
+                "audio/mpeg": ".mp3",
+                "audio/wav": ".wav",
+                "audio/x-wav": ".wav",
+            }
+            suffix = ext_map.get(mime_type, ".webm")
+
+            try:
+                audio_bytes = base64.b64decode(audio_base64, validate=True)
+            except Exception:
+                return {"text": "", "error": "Invalid audio encoding"}
+
+            if not audio_bytes:
+                return {"text": "", "error": "Empty audio payload"}
+
+            from nanobot.providers.transcription import GroqTranscriptionProvider
+
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(audio_bytes)
+                tmp_path = Path(tmp.name)
+
+            try:
+                transcriber = GroqTranscriptionProvider()
+                text = (await transcriber.transcribe(tmp_path)).strip()
+                if not text:
+                    return {
+                        "text": "",
+                        "error": "Transcription unavailable. Set GROQ_API_KEY and try again.",
+                    }
+                return {"text": text}
+            finally:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
         raise ValueError(f"Unsupported request type: {request.req_type}")
 
