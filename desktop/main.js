@@ -3,6 +3,47 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
+const ELEVENLABS_DEFAULT_VOICE_ID = "lhTvHflPVOqgSWyuWQry";
+
+async function synthesizeSpeechWithElevenLabs(text) {
+  const apiKey = String(process.env.ELEVENLABS_API_KEY || "").trim();
+  if (!apiKey) {
+    throw new Error("Missing ELEVENLABS_API_KEY for ElevenLabs TTS");
+  }
+
+  const voiceId = String(process.env.ELEVENLABS_VOICE_ID || ELEVENLABS_DEFAULT_VOICE_ID).trim();
+  const response = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream`,
+    {
+      method: "POST",
+      headers: {
+        "xi-api-key": apiKey,
+        "Content-Type": "application/json",
+        Accept: "audio/mpeg",
+      },
+      body: JSON.stringify({
+        text,
+        model_id: "eleven_multilingual_v2",
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`ElevenLabs TTS failed (${response.status}): ${message || response.statusText}`);
+  }
+
+  const audioBuffer = Buffer.from(await response.arrayBuffer());
+  if (!audioBuffer.length) {
+    throw new Error("ElevenLabs TTS returned empty audio");
+  }
+
+  return {
+    mimeType: response.headers.get("content-type") || "audio/mpeg",
+    audioBase64: audioBuffer.toString("base64"),
+  };
+}
+
 let mainWindow = null;
 let tray = null;
 
@@ -458,6 +499,14 @@ ipcMain.handle("overlay:send", async (_event, requestPayload) => {
 
 ipcMain.handle("overlay:get-capture-status", () => {
   return screenCapture.getStatus();
+});
+
+ipcMain.handle("overlay:tts", async (_event, text) => {
+  const content = String(text || "").trim();
+  if (!content) {
+    return null;
+  }
+  return synthesizeSpeechWithElevenLabs(content);
 });
 
 ipcMain.on("overlay:set-background-vision", (_event, enabled) => {

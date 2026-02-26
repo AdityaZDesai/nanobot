@@ -30,6 +30,8 @@ const canvas = document.getElementById("live2d-canvas");
 let ttsEnabled = true;
 let recognition = null;
 let model = null;
+let currentAudio = null;
+let currentAudioUrl = null;
 
 async function ensureCubism2Runtime() {
   if (window.Live2D && window.Live2DModelWebGL) {
@@ -58,15 +60,42 @@ function addMessage(role, text) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-function speak(text) {
+function stopSpeechPlayback() {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+  if (currentAudioUrl) {
+    URL.revokeObjectURL(currentAudioUrl);
+    currentAudioUrl = null;
+  }
+}
+
+async function speak(text) {
   if (!ttsEnabled || !text) {
     return;
   }
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 1;
-  utterance.pitch = 1.1;
-  window.speechSynthesis.speak(utterance);
+
+  stopSpeechPlayback();
+
+  const payload = await ipcRenderer.invoke("overlay:tts", text);
+  if (!payload || !payload.audioBase64) {
+    throw new Error("ElevenLabs did not return audio");
+  }
+
+  const mimeType = String(payload.mimeType || "audio/mpeg");
+  const binary = atob(payload.audioBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  currentAudioUrl = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+  currentAudio = new Audio(currentAudioUrl);
+  currentAudio.onended = () => {
+    stopSpeechPlayback();
+  };
+  await currentAudio.play();
 }
 
 async function sendMessage() {
@@ -81,7 +110,7 @@ async function sendMessage() {
   try {
     const response = await ipcRenderer.invoke("overlay:send", { text });
     addMessage("bot", response || "(No response)");
-    speak(response || "");
+    await speak(response || "");
     if (model && model.motion) {
       try {
         model.motion("tap_body");
@@ -185,7 +214,7 @@ voiceOutBtn.addEventListener("click", () => {
   ttsEnabled = !ttsEnabled;
   voiceOutBtn.textContent = ttsEnabled ? "Voice" : "Muted";
   if (!ttsEnabled) {
-    window.speechSynthesis.cancel();
+    stopSpeechPlayback();
   }
 });
 

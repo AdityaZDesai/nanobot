@@ -11,6 +11,21 @@ the latest frame to each chat message so nanobot can "see" your screen.
 - Change interval (2-60 seconds) with `Every Ns`
 - On macOS, grant **Screen Recording** permission to Electron/Nanobot Overlay
 
+## Voice output (ElevenLabs)
+
+The overlay uses ElevenLabs TTS only (no browser speech fallback).
+
+- Set `ELEVENLABS_API_KEY` before starting the app
+- Default voice ID is `lhTvHflPVOqgSWyuWQry`
+- Optional: set `ELEVENLABS_VOICE_ID` to override the voice
+
+Example:
+
+```bash
+cd desktop
+ELEVENLABS_API_KEY=your_key_here npm run dev
+```
+
 ## Requirements
 
 - Node.js 20+
