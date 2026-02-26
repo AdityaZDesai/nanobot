@@ -128,9 +128,10 @@ class DesktopBridge:
 
             proactive_prompt = (
                 "You are proactively checking in with the user in desktop overlay mode. "
-                "Create exactly one short, natural, non-annoying message (max 2 sentences) that is warm and productive. "
+                "Create exactly one short, natural, non-annoying girlfriend-style message (1-2 short sentences, under 45 words). "
                 "If screenshots are attached, ground your message in visible context and suggest one small next step. "
                 "Do not sound robotic, do not guilt-trip, and do not send generic spammy motivation. "
+                "Do not use bullet points or numbered lists. "
                 "Do not mention screenshots unless it helps the suggestion feel natural. "
                 "If there is no meaningful, useful nudge right now, reply exactly with __SKIP__. "
                 f"The user has been idle for about {idle_minutes} minutes. "
