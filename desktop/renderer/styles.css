@@ -25,7 +25,7 @@ body {
 #overlay-root {
   height: 100%;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto minmax(220px, 1fr) auto;
   background: radial-gradient(circle at 50% -5%, rgba(125, 211, 252, 0.26), rgba(0, 0, 0, 0));
 }
 
@@ -61,6 +61,7 @@ body {
 
 .character-area {
   position: relative;
+  min-height: 220px;
 }
 
 #live2d-canvas {
@@ -170,6 +171,15 @@ button:hover {
 
 #capture-interval {
   width: 54px;
+  padding: 2px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(3, 7, 18, 0.5);
+  color: var(--text);
+}
+
+.proactive-controls input {
+  width: 44px;
   padding: 2px 4px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 6px;

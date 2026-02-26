@@ -26,6 +26,12 @@ const proactiveEnabledEl = document.getElementById("proactive-enabled");
 const captureIntervalEl = document.getElementById("capture-interval");
 const visionStatusEl = document.getElementById("vision-status");
 const proactiveStatusEl = document.getElementById("proactive-status");
+const proactiveIdleEl = document.getElementById("proactive-idle");
+const proactiveCooldownEl = document.getElementById("proactive-cooldown");
+const proactiveMaxEl = document.getElementById("proactive-max");
+const proactiveChanceEl = document.getElementById("proactive-chance");
+const proactiveQuietStartEl = document.getElementById("proactive-quiet-start");
+const proactiveQuietEndEl = document.getElementById("proactive-quiet-end");
 const canvas = document.getElementById("live2d-canvas");
 
 let ttsEnabled = true;
@@ -370,6 +376,26 @@ proactiveEnabledEl.addEventListener("change", () => {
   ipcRenderer.send("overlay:set-proactive", proactiveEnabledEl.checked);
 });
 
+function bindProactiveConfigInput(inputEl, field) {
+  inputEl.addEventListener("change", () => {
+    const value = Number(inputEl.value);
+    ipcRenderer.invoke("overlay:set-proactive-config", { [field]: value })
+      .then((status) => {
+        updateProactiveStatus(status);
+      })
+      .catch((err) => {
+        addMessage("bot", `[proactive] ${String(err.message || err)}`);
+      });
+  });
+}
+
+bindProactiveConfigInput(proactiveIdleEl, "minIdleMinutes");
+bindProactiveConfigInput(proactiveCooldownEl, "cooldownMinutes");
+bindProactiveConfigInput(proactiveMaxEl, "maxPerDay");
+bindProactiveConfigInput(proactiveChanceEl, "randomChancePercent");
+bindProactiveConfigInput(proactiveQuietStartEl, "quietStartHour");
+bindProactiveConfigInput(proactiveQuietEndEl, "quietEndHour");
+
 function updateVisionStatus(status) {
   if (!status) {
     visionStatusEl.textContent = "Unknown";
@@ -398,6 +424,12 @@ function updateProactiveStatus(status) {
   }
   proactiveEnabledEl.checked = Boolean(status.enabled);
   proactiveStatusEl.textContent = `Nudges: ${Number(status.sentToday || 0)}/${Number(status.maxPerDay || 0)}`;
+  proactiveIdleEl.value = String(Number(status.minIdleMinutes || 45));
+  proactiveCooldownEl.value = String(Number(status.cooldownMinutes || 120));
+  proactiveMaxEl.value = String(Number(status.maxPerDay || 2));
+  proactiveChanceEl.value = String(Number(status.randomChancePercent || 35));
+  proactiveQuietStartEl.value = String(Number(status.quietStartHour ?? 22));
+  proactiveQuietEndEl.value = String(Number(status.quietEndHour ?? 8));
 }
 
 ipcRenderer.on("backend:ready", () => {
