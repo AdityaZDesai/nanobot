@@ -185,6 +185,67 @@ class AgentLoop:
         return re.sub(r"<think>[\s\S]*?</think>", "", text).strip() or None
 
     @staticmethod
+    def _wants_detailed_format(user_text: str) -> bool:
+        query = (user_text or "").lower()
+        if not query:
+            return False
+        detail_markers = (
+            "plan",
+            "options",
+            "compare",
+            "list",
+            "itinerary",
+            "pros and cons",
+            "pros/cons",
+            "detailed",
+            "details",
+            "breakdown",
+        )
+        return any(marker in query for marker in detail_markers)
+
+    @staticmethod
+    def _is_visual_request(user_text: str) -> bool:
+        query = (user_text or "").lower()
+        visual_markers = (
+            "screenshot",
+            "screen",
+            "look at",
+            "what do you see",
+            "see this",
+            "image",
+            "photo",
+            "picture",
+        )
+        return any(marker in query for marker in visual_markers)
+
+    def _format_girlfriend_reply(self, text: str | None, user_text: str) -> str | None:
+        if not self.girlfriend_mode or not text:
+            return text
+        if self._wants_detailed_format(user_text):
+            return text
+
+        normalized = re.sub(r"\s+", " ", text).strip()
+        normalized = re.sub(r"[!]{2,}", "!", normalized)
+
+        sentences = re.split(r"(?<=[.!?])\s+", normalized)
+        if not self._is_visual_request(user_text):
+            visual_noise = re.compile(
+                r"\b(i see|looks like|contribution graph|commit(s)? ratio|input box|overlay|on your screen)\b",
+                re.IGNORECASE,
+            )
+            sentences = [s for s in sentences if not visual_noise.search(s)]
+
+        cleaned = " ".join(sentences[:2]).strip() or normalized
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+        words = cleaned.split()
+        max_words = 45
+        if len(words) > max_words:
+            cleaned = " ".join(words[:max_words]).rstrip(".,;: ") + "..."
+
+        return cleaned
+
+    @staticmethod
     def _tool_hint(tool_calls: list) -> str:
         """Format tool calls as concise hint, e.g. 'web_search("query")'."""
 
@@ -506,6 +567,8 @@ class AgentLoop:
 
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
+
+        final_content = self._format_girlfriend_reply(final_content, msg.content) or final_content
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -90,6 +91,17 @@ class DesktopBridge:
             await self.agent_loop.close_mcp()
             self.agent_loop = None
 
+    @staticmethod
+    def _shorten_proactive_text(text: str, max_words: int = 45) -> str:
+        cleaned = re.sub(r"\s+", " ", text).strip()
+        cleaned = re.sub(r"^[\-\*\d\.)\s]+", "", cleaned)
+        cleaned = re.sub(r"\n+[\-\*\d\.)\s]+", " ", cleaned)
+        cleaned = re.sub(r"[!]{2,}", "!", cleaned)
+        words = cleaned.split()
+        if len(words) > max_words:
+            cleaned = " ".join(words[:max_words]).rstrip(".,;: ") + "..."
+        return cleaned
+
     async def handle(self, request: BridgeRequest) -> dict[str, Any]:
         if request.req_type == "health":
             return {"ok": True}
@@ -142,7 +154,7 @@ class DesktopBridge:
             text = (response or "").strip()
             if text == "__SKIP__":
                 return {"text": ""}
-            return {"text": text}
+            return {"text": self._shorten_proactive_text(text)}
 
         if request.req_type == "transcribe":
             audio_base64 = str(request.payload.get("audio_base64", "")).strip()

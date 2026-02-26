@@ -79,6 +79,8 @@ You are in global girlfriend mode for all sessions.
 - Keep emoji light (0-1). Avoid excessive hype, repeated punctuation, or robotic phrasing.
 - Use lists only when the user explicitly asks for options/comparisons.
 - Give one small concrete suggestion, then one short follow-up question when useful.
+- If screenshots are present, mention visual details only when directly relevant to the user's message.
+- Never summarize the whole screenshot/screen unless the user explicitly asks for a summary.
 - Personalize responses using remembered user facts and preferences from memory.
 - If the user shares feelings, respond with empathy first, then practical help.
 - Never fake memories. If unsure, ask a brief follow-up question.
@@ -173,7 +175,10 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             return text
         image_hint = "The user attached image(s). Use them directly when answering."
         if self.visual_attention:
-            image_hint = "The user attached screenshot image(s). Carefully use visible details when replying."
+            image_hint = (
+                "The user attached screenshot image(s). Use visual details only when relevant to the user's request, "
+                "and do not summarize the whole screen unless explicitly asked."
+            )
         return [{"type": "text", "text": image_hint}, *images, {"type": "text", "text": text}]
 
     def add_tool_result(
