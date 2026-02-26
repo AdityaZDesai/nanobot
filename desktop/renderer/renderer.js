@@ -1,11 +1,12 @@
 const { ipcRenderer } = require("electron");
 const PIXI = require("pixi.js");
+const path = require("path");
 const { pathToFileURL } = require("url");
 
 globalThis.PIXI = PIXI;
 
 const localModelPath = require.resolve("live2d-widget-model-shizuku/assets/shizuku.model.json");
-const cubism2RuntimePath = require.resolve("live2d-widget/lib/L2Dwidget.0.min.js");
+const cubism2RuntimePath = path.join(__dirname, "vendor", "live2d.min.js");
 
 const modelCandidates = [
   pathToFileURL(localModelPath).href,
@@ -30,26 +31,22 @@ let ttsEnabled = true;
 let recognition = null;
 let model = null;
 
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = src;
-    script.async = false;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
-    document.head.appendChild(script);
-  });
-}
-
 async function ensureCubism2Runtime() {
-  if (window.Live2D) {
+  if (window.Live2D && window.Live2DModelWebGL) {
     return;
   }
 
-  await loadScript(pathToFileURL(cubism2RuntimePath).href);
+  await new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = pathToFileURL(cubism2RuntimePath).href;
+    script.async = false;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load local Cubism 2 runtime"));
+    document.head.appendChild(script);
+  });
 
-  if (!window.Live2D) {
-    throw new Error("Cubism 2 runtime was loaded but window.Live2D is missing");
+  if (!window.Live2D || !window.Live2DModelWebGL) {
+    throw new Error("Cubism 2 runtime exports are missing");
   }
 }
 
