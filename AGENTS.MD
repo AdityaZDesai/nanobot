@@ -1,0 +1,1 @@
+After the end of every change that is made, commit the changes with a detailed commit message. 
