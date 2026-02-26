@@ -2,6 +2,15 @@
 
 Always-on-top desktop overlay with a Live2D character and chat.
 
+## Screen vision (periodic capture)
+
+The overlay now captures a background screenshot every 5 seconds and attaches
+the latest frame to each chat message so nanobot can "see" your screen.
+
+- Toggle it in the overlay with `Vision`
+- Change interval (2-60 seconds) with `Every Ns`
+- On macOS, grant **Screen Recording** permission to Electron/Nanobot Overlay
+
 ## Requirements
 
 - Node.js 20+

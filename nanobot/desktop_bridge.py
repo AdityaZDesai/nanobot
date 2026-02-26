@@ -100,7 +100,13 @@ class DesktopBridge:
                 return {"text": ""}
 
             session = str(request.payload.get("session", "overlay:default"))
-            response = await self.agent_loop.process_direct(text, session)
+            raw_media = request.payload.get("media") or []
+            media = (
+                [str(item) for item in raw_media if isinstance(item, str)]
+                if isinstance(raw_media, list)
+                else []
+            )
+            response = await self.agent_loop.process_direct(text, session, media=media)
             return {"text": response or ""}
 
         raise ValueError(f"Unsupported request type: {request.req_type}")

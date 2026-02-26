@@ -22,6 +22,9 @@ const voiceOutBtn = document.getElementById("voice-out");
 const clickThroughEl = document.getElementById("click-through");
 const pinTopEl = document.getElementById("pin-top");
 const opacityEl = document.getElementById("opacity");
+const visionEnabledEl = document.getElementById("vision-enabled");
+const captureIntervalEl = document.getElementById("capture-interval");
+const visionStatusEl = document.getElementById("vision-status");
 const canvas = document.getElementById("live2d-canvas");
 
 let ttsEnabled = true;
@@ -57,7 +60,7 @@ async function sendMessage() {
   inputEl.value = "";
 
   try {
-    const response = await ipcRenderer.invoke("overlay:send", text);
+    const response = await ipcRenderer.invoke("overlay:send", { text });
     addMessage("bot", response || "(No response)");
     speak(response || "");
     if (model && model.motion) {
@@ -168,6 +171,36 @@ opacityEl.addEventListener("input", () => {
   ipcRenderer.send("overlay:set-opacity", Number(opacityEl.value) / 100);
 });
 
+visionEnabledEl.addEventListener("change", () => {
+  ipcRenderer.send("overlay:set-background-vision", visionEnabledEl.checked);
+});
+
+captureIntervalEl.addEventListener("change", () => {
+  const seconds = Number(captureIntervalEl.value);
+  ipcRenderer.send("overlay:set-capture-interval", seconds);
+});
+
+function updateVisionStatus(status) {
+  if (!status) {
+    visionStatusEl.textContent = "Unknown";
+    return;
+  }
+
+  visionEnabledEl.checked = Boolean(status.enabled);
+  captureIntervalEl.value = String(status.intervalSeconds || 5);
+  captureIntervalEl.disabled = !status.enabled;
+
+  if (!status.enabled) {
+    visionStatusEl.textContent = "Paused";
+  } else if (status.lastError) {
+    visionStatusEl.textContent = "Permission needed";
+  } else if (status.hasCapture) {
+    visionStatusEl.textContent = "Capturing";
+  } else {
+    visionStatusEl.textContent = "Starting";
+  }
+}
+
 ipcRenderer.on("backend:ready", () => {
   addMessage("bot", "Nanobot overlay is ready.");
 });
@@ -179,6 +212,18 @@ ipcRenderer.on("backend:exit", (_event, code) => {
 ipcRenderer.on("backend:log", (_event, text) => {
   addMessage("bot", `[log] ${text}`);
 });
+
+ipcRenderer.on("screen-capture:status", (_event, status) => {
+  updateVisionStatus(status);
+});
+
+ipcRenderer.invoke("overlay:get-capture-status")
+  .then((status) => {
+    updateVisionStatus(status);
+  })
+  .catch(() => {
+    updateVisionStatus(null);
+  });
 
 setupVoiceInput();
 loadLive2D();

@@ -149,8 +149,25 @@ button:hover {
   padding: 0 10px 10px;
   color: var(--muted);
   font-size: 12px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .settings-row input {
   vertical-align: middle;
+}
+
+#capture-interval {
+  width: 54px;
+  padding: 2px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(3, 7, 18, 0.5);
+  color: var(--text);
+}
+
+#vision-status {
+  opacity: 0.9;
 }

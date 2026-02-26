@@ -165,6 +165,7 @@ nanobot now includes a desktop overlay shell under `desktop/` with:
 - Always-on-top transparent overlay window
 - Live2D anime character
 - Text chat and voice input/output
+- Optional periodic screen capture for vision-aware responses
 - Installer builds for macOS/Windows/Linux via Electron Builder
 
 Quick start:
