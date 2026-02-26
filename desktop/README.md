@@ -17,7 +17,6 @@ The overlay uses ElevenLabs TTS only (no browser speech fallback).
 
 - Set `ELEVENLABS_API_KEY` before starting the app
 - Default voice ID is `lhTvHflPVOqgSWyuWQry`
-- Optional: set `ELEVENLABS_VOICE_ID` to override the voice
 
 Example:
 

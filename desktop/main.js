@@ -11,9 +11,8 @@ async function synthesizeSpeechWithElevenLabs(text) {
     throw new Error("Missing ELEVENLABS_API_KEY for ElevenLabs TTS");
   }
 
-  const voiceId = String(process.env.ELEVENLABS_VOICE_ID || ELEVENLABS_DEFAULT_VOICE_ID).trim();
   const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(ELEVENLABS_DEFAULT_VOICE_ID)}/stream`,
     {
       method: "POST",
       headers: {
@@ -23,7 +22,7 @@ async function synthesizeSpeechWithElevenLabs(text) {
       },
       body: JSON.stringify({
         text,
-        model_id: "eleven_multilingual_v2",
+        model_id: "eleven_multilingual_v3",
       }),
     }
   );

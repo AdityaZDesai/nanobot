@@ -11,7 +11,6 @@ const cubism2RuntimePath = path.join(__dirname, "vendor", "live2d.min.js");
 const modelCandidates = [
   pathToFileURL(localModelPath).href,
   "https://unpkg.com/live2d-widget-model-shizuku@1.0.5/assets/shizuku.model.json",
-  "https://unpkg.com/live2d-widget-model-haru@1.0.5/assets/haru01.model.json",
 ];
 
 const messagesEl = document.getElementById("messages");
