@@ -16,6 +16,16 @@ function parseElevenLabsError(rawBody) {
 }
 
 async function requestElevenLabsSpeech({ apiKey, text, modelId }) {
+  const voiceSettings =
+    modelId === ELEVENLABS_FALLBACK_MODEL_ID
+      ? {
+        stability: 0.32,
+        similarity_boost: 0.85,
+        style: 0.55,
+        use_speaker_boost: true,
+      }
+      : undefined;
+
   const response = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(ELEVENLABS_DEFAULT_VOICE_ID)}/stream`,
     {
@@ -28,12 +38,7 @@ async function requestElevenLabsSpeech({ apiKey, text, modelId }) {
       body: JSON.stringify({
         text,
         model_id: modelId,
-        voice_settings: {
-          stability: 0.32,
-          similarity_boost: 0.85,
-          style: 0.55,
-          use_speaker_boost: true,
-        },
+        ...(voiceSettings ? { voice_settings: voiceSettings } : {}),
       }),
     }
   );
