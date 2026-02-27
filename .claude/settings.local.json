@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where.exe python3)",
+      "Bash(where.exe python)",
+      "Bash(where.exe py)",
+      "Bash(python3.exe --version)"
+    ]
+  }
+}

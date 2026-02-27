@@ -10,8 +10,12 @@ from typing import Any, AsyncGenerator
 import httpx
 from loguru import logger
 
-from oauth_cli_kit import get_token as get_codex_token
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+
+try:
+    from oauth_cli_kit import get_token as get_codex_token
+except ModuleNotFoundError:
+    get_codex_token = None
 
 DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 DEFAULT_ORIGINATOR = "nanobot"
@@ -35,6 +39,8 @@ class OpenAICodexProvider(LLMProvider):
         model = model or self.default_model
         system_prompt, input_items = _convert_messages(messages)
 
+        if get_codex_token is None:
+            raise RuntimeError("oauth-cli-kit is required for the Codex provider. Install it with: pip install oauth-cli-kit")
         token = await asyncio.to_thread(get_codex_token)
         headers = _build_headers(token.account_id, token.access)
 

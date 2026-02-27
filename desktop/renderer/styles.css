@@ -29,6 +29,22 @@ body {
   background: radial-gradient(circle at 50% -5%, rgba(125, 211, 252, 0.26), rgba(0, 0, 0, 0));
 }
 
+/* Avatar-only mode: hide everything except the character */
+#overlay-root.avatar-only .topbar,
+#overlay-root.avatar-only .chat-panel {
+  display: none;
+}
+
+#overlay-root.avatar-only {
+  grid-template-rows: 1fr;
+  background: transparent;
+}
+
+#overlay-root.avatar-only .character-area {
+  -webkit-app-region: drag;
+  cursor: grab;
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;

@@ -38,6 +38,7 @@ let ttsEnabled = true;
 let model = null;
 let currentAudio = null;
 let currentAudioUrl = null;
+let live2dApp = null;
 let mediaRecorder = null;
 let mediaStream = null;
 let isRecording = false;
@@ -176,19 +177,22 @@ async function loadLive2D() {
     return;
   }
 
+  live2dApp = app;
   app.stage.addChild(model);
 
-  function fitModel() {
-    const { width, height } = app.screen;
-    const scale = Math.min(width / model.width, height / model.height) * 0.9;
-    model.scale.set(scale);
-    model.x = width * 0.5;
-    model.y = height * 0.96;
-    model.anchor.set(0.5, 1);
-  }
+  fitLive2DModel();
+  window.addEventListener("resize", fitLive2DModel);
+}
 
-  fitModel();
-  window.addEventListener("resize", fitModel);
+function fitLive2DModel() {
+  if (!model || !live2dApp) return;
+  live2dApp.resize();
+  const { width, height } = live2dApp.screen;
+  const scale = Math.min(width / model.width, height / model.height) * 0.9;
+  model.scale.set(scale);
+  model.x = width * 0.5;
+  model.y = height * 0.96;
+  model.anchor.set(0.5, 1);
 }
 
 function getSupportedMimeType() {
@@ -512,5 +516,31 @@ ipcRenderer.invoke("overlay:get-proactive-status")
   .catch(() => {
     updateProactiveStatus(null);
   });
+
+// --- Avatar-only / chat toggle ---
+const overlayRoot = document.getElementById("overlay-root");
+
+function setChatExpanded(expanded) {
+  if (expanded) {
+    overlayRoot.classList.remove("avatar-only");
+  } else {
+    overlayRoot.classList.add("avatar-only");
+  }
+  ipcRenderer.send("overlay:set-chat-expanded", expanded);
+  // Re-fit avatar after window resize settles
+  setTimeout(fitLive2DModel, 150);
+}
+
+function toggleChat() {
+  const isExpanded = !overlayRoot.classList.contains("avatar-only");
+  setChatExpanded(!isExpanded);
+  if (!isExpanded) {
+    inputEl.focus();
+  }
+}
+
+ipcRenderer.on("overlay:toggle-chat", () => {
+  toggleChat();
+});
 
 loadLive2D();

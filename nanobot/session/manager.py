@@ -55,7 +55,18 @@ class Session:
 
         out: list[dict[str, Any]] = []
         for m in sliced:
-            entry: dict[str, Any] = {"role": m["role"], "content": m.get("content", "")}
+            content = m.get("content", "")
+            # Flatten list content (image blocks) to plain text
+            if isinstance(content, list):
+                text_parts = [
+                    item.get("text", "")
+                    for item in content
+                    if isinstance(item, dict) and item.get("type") in ("text", "input_text")
+                ]
+                content = "\n".join(t for t in text_parts if t)
+            if content is None:
+                content = ""
+            entry: dict[str, Any] = {"role": m["role"], "content": content}
             for k in ("tool_calls", "tool_call_id", "name"):
                 if k in m:
                     entry[k] = m[k]

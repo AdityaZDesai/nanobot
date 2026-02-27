@@ -152,17 +152,36 @@ class LiteLLMProvider(LLMProvider):
                     kwargs.update(overrides)
                     return
     
-    @staticmethod
-    def _sanitize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Strip non-standard keys and ensure assistant messages have a content key."""
+    def _sanitize_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Strip non-standard keys, ensure content is always a string for strict providers."""
+        model = self.default_model
+        supports_vision = self._model_supports_vision(model)
         sanitized = []
         for msg in messages:
             clean = {k: v for k, v in msg.items() if k in _ALLOWED_MSG_KEYS}
             # Strict providers require "content" even when assistant only has tool_calls
             if clean.get("role") == "assistant" and "content" not in clean:
-                clean["content"] = None
+                clean["content"] = ""
+            # Ensure content is never None — some providers (Groq) reject it
+            if clean.get("content") is None:
+                clean["content"] = ""
+            # Flatten list content to text for non-vision models
+            if isinstance(clean.get("content"), list) and not supports_vision:
+                text_parts = [
+                    item.get("text", "")
+                    for item in clean["content"]
+                    if isinstance(item, dict) and item.get("type") in ("text", "input_text")
+                ]
+                clean["content"] = "\n".join(t for t in text_parts if t)
             sanitized.append(clean)
         return sanitized
+
+    @staticmethod
+    def _model_supports_vision(model: str) -> bool:
+        """Check if the model likely supports vision/image inputs."""
+        lower = model.lower()
+        vision_keywords = ("vision", "gpt-4o", "gpt-4-turbo", "claude", "gemini", "pixtral")
+        return any(kw in lower for kw in vision_keywords)
 
     async def chat(
         self,

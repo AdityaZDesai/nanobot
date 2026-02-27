@@ -202,7 +202,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         reasoning_content: str | None = None,
     ) -> list[dict[str, Any]]:
         """Add an assistant message to the message list."""
-        msg: dict[str, Any] = {"role": "assistant", "content": content}
+        msg: dict[str, Any] = {"role": "assistant", "content": content or ""}
         if tool_calls:
             msg["tool_calls"] = tool_calls
         if reasoning_content is not None:

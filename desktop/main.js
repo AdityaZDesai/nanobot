@@ -497,9 +497,9 @@ class BackendBridge {
 
     if (process.platform === "win32") {
       return {
-        command: "py",
-        extraArgs: ["-3"],
-        source: "py -3 fallback",
+        command: "python3",
+        extraArgs: [],
+        source: "python3 fallback (win32)",
       };
     }
 
@@ -652,12 +652,16 @@ const proactiveCompanion = new ProactiveCompanionService({
   screenCaptureService: screenCapture,
 });
 
+const AVATAR_ONLY_SIZE = { width: 300, height: 350 };
+let EXPANDED_SIZE = { width: 460, height: 720 };
+let chatExpanded = false;
+
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 460,
-    height: 720,
-    minWidth: 360,
-    minHeight: 520,
+    width: AVATAR_ONLY_SIZE.width,
+    height: AVATAR_ONLY_SIZE.height,
+    minWidth: 200,
+    minHeight: 200,
     frame: false,
     transparent: true,
     hasShadow: false,
@@ -752,6 +756,17 @@ app.whenReady().then(() => {
       mainWindow.show();
     }
     mainWindow.webContents.send("overlay:voice-shortcut");
+  });
+
+  globalShortcut.register("CommandOrControl+Shift+A", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+    if (!mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+    mainWindow.focus();
+    mainWindow.webContents.send("overlay:toggle-chat");
   });
 });
 
@@ -881,4 +896,23 @@ ipcMain.on("overlay:set-opacity", (_event, value) => {
 ipcMain.on("overlay:pin-top", (_event, enabled) => {
   if (!mainWindow) return;
   mainWindow.setAlwaysOnTop(Boolean(enabled), "screen-saver");
+});
+
+ipcMain.on("overlay:set-chat-expanded", (_event, expanded) => {
+  if (!mainWindow) return;
+  const wasExpanded = chatExpanded;
+  chatExpanded = Boolean(expanded);
+
+  if (chatExpanded && !wasExpanded) {
+    // Expanding: restore saved expanded size
+    mainWindow.setMinimumSize(360, 520);
+    mainWindow.setSize(EXPANDED_SIZE.width, EXPANDED_SIZE.height, true);
+  } else if (!chatExpanded && wasExpanded) {
+    // Collapsing: save current size, then shrink
+    const [w, h] = mainWindow.getSize();
+    EXPANDED_SIZE.width = w;
+    EXPANDED_SIZE.height = h;
+    mainWindow.setMinimumSize(200, 200);
+    mainWindow.setSize(AVATAR_ONLY_SIZE.width, AVATAR_ONLY_SIZE.height, true);
+  }
 });
