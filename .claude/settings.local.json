@@ -1,10 +1,23 @@
 {
   "permissions": {
     "allow": [
-      "Bash(where.exe python3)",
-      "Bash(where.exe python)",
-      "Bash(where.exe py)",
-      "Bash(python3.exe --version)"
+      "Bash(*)",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "Task"
+    ],
+    "deny": [
+      "Bash(rm *)",
+      "Bash(*rm *)",
+      "Bash(rmdir *)",
+      "Bash(del *)",
+      "Bash(*Delete-Item*)",
+      "Bash(*Remove-Item*)"
     ]
   }
 }

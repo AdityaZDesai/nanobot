@@ -11,7 +11,19 @@
     "build": "electron-builder"
   },
   "dependencies": {
+    "@ai-zen/live2d-core": "^1.0.2",
+    "live2d-widget-model-epsilon2_1": "^1.0.5",
+    "live2d-widget-model-haru01": "^2.0.0",
+    "live2d-widget-model-haru02": "^2.0.0",
+    "live2d-widget-model-haruto": "^1.0.5",
+    "live2d-widget-model-hijiki": "^1.0.5",
+    "live2d-widget-model-koharu": "^1.0.5",
+    "live2d-widget-model-miku": "^1.0.5",
+    "live2d-widget-model-ni-j": "^1.0.5",
     "live2d-widget-model-shizuku": "^1.0.5",
+    "live2d-widget-model-tororo": "^1.0.5",
+    "live2d-widget-model-wanko": "^1.0.5",
+    "live2d-widget-model-z16": "^1.0.5",
     "pixi-live2d-display": "^0.4.0",
     "pixi.js": "^6.5.10"
   },

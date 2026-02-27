@@ -5,13 +5,26 @@ const { pathToFileURL } = require("url");
 
 globalThis.PIXI = PIXI;
 
-const localModelPath = require.resolve("live2d-widget-model-shizuku/assets/shizuku.model.json");
 const cubism2RuntimePath = path.join(__dirname, "vendor", "live2d.min.js");
+const cubism4CorePath = require.resolve("@ai-zen/live2d-core/live2dcubismcore.min.js");
 
-const modelCandidates = [
-  pathToFileURL(localModelPath).href,
-  "https://unpkg.com/live2d-widget-model-shizuku@1.0.5/assets/shizuku.model.json",
-];
+const MODEL_MAP = {
+  // --- Cubism 4 (moc3) ---
+  hiyori:      { local: path.join(__dirname, "models", "Hiyori", "Hiyori.model3.json") },
+  // --- Cubism 2 (moc) ---
+  koharu:      { pkg: "live2d-widget-model-koharu/assets/koharu.model.json" },
+  shizuku:     { pkg: "live2d-widget-model-shizuku/assets/shizuku.model.json" },
+  miku:        { pkg: "live2d-widget-model-miku/assets/miku.model.json" },
+  hijiki:      { pkg: "live2d-widget-model-hijiki/assets/hijiki.model.json" },
+  tororo:      { pkg: "live2d-widget-model-tororo/assets/tororo.model.json" },
+  haruto:      { pkg: "live2d-widget-model-haruto/assets/haruto.model.json" },
+  wanko:       { pkg: "live2d-widget-model-wanko/assets/wanko.model.json" },
+  z16:         { pkg: "live2d-widget-model-z16/assets/z16.model.json" },
+  "ni-j":      { pkg: "live2d-widget-model-ni-j/assets/ni-j.model.json" },
+  epsilon2_1:  { pkg: "live2d-widget-model-epsilon2_1/assets/Epsilon2.1.model.json" },
+};
+
+let currentModelKey = "hiyori";
 
 const messagesEl = document.getElementById("messages");
 const inputEl = document.getElementById("input");
@@ -33,6 +46,8 @@ const proactiveChanceEl = document.getElementById("proactive-chance");
 const proactiveQuietStartEl = document.getElementById("proactive-quiet-start");
 const proactiveQuietEndEl = document.getElementById("proactive-quiet-end");
 const canvas = document.getElementById("live2d-canvas");
+const modelSelectEl = document.getElementById("model-select");
+const avatarSizeEl = document.getElementById("avatar-size");
 
 let ttsEnabled = true;
 let model = null;
@@ -62,6 +77,25 @@ async function ensureCubism2Runtime() {
 
   if (!window.Live2D || !window.Live2DModelWebGL) {
     throw new Error("Cubism 2 runtime exports are missing");
+  }
+}
+
+async function ensureCubism4Runtime() {
+  if (window.Live2DCubismCore) {
+    return;
+  }
+
+  await new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = pathToFileURL(cubism4CorePath).href;
+    script.async = false;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Cubism 4 core"));
+    document.head.appendChild(script);
+  });
+
+  if (!window.Live2DCubismCore) {
+    throw new Error("Cubism 4 runtime (Live2DCubismCore) is missing after load");
   }
 }
 
@@ -143,15 +177,28 @@ async function sendMessage() {
   }
 }
 
+function getModelURL(key) {
+  const entry = MODEL_MAP[key];
+  if (!entry) return null;
+  if (entry.local) return pathToFileURL(entry.local).href;
+  const resolved = require.resolve(entry.pkg);
+  return pathToFileURL(resolved).href;
+}
+
 async function loadLive2D() {
   try {
     await ensureCubism2Runtime();
   } catch (err) {
-    addMessage("bot", `Failed to initialize Live2D runtime: ${String(err.message || err)}`);
-    return;
+    addMessage("bot", `[live2d] Cubism 2 runtime failed: ${String(err.message || err)}`);
   }
 
-  const { Live2DModel } = require("pixi-live2d-display/cubism2");
+  try {
+    await ensureCubism4Runtime();
+  } catch (err) {
+    addMessage("bot", `[live2d] Cubism 4 runtime failed: ${String(err.message || err)}`);
+  }
+
+  const { Live2DModel } = require("pixi-live2d-display");
 
   const app = new PIXI.Application({
     view: canvas,
@@ -160,39 +207,79 @@ async function loadLive2D() {
     antialias: true,
   });
 
-  for (const url of modelCandidates) {
-    try {
-      model = await Live2DModel.from(url, {
-        autoInteract: true,
-      });
-      break;
-    } catch (err) {
-      addMessage("bot", `[live2d] Failed model candidate: ${url}`);
-      addMessage("bot", `[live2d] ${String(err.message || err)}`);
-    }
+  const url = getModelURL(currentModelKey);
+  if (!url) {
+    addMessage("bot", `Unknown model: ${currentModelKey}`);
+    return;
   }
 
-  if (!model) {
-    addMessage("bot", "Failed to load Live2D model from local assets or fallback URLs.");
+  try {
+    model = await Live2DModel.from(url, { autoInteract: true });
+  } catch (err) {
+    addMessage("bot", `[live2d] Failed to load ${currentModelKey}: ${String(err.message || err)}`);
     return;
   }
 
   live2dApp = app;
   app.stage.addChild(model);
+  model.anchor.set(0.5, 0.5);
 
   fitLive2DModel();
   window.addEventListener("resize", fitLive2DModel);
 }
 
-function fitLive2DModel() {
+async function swapModel(key) {
+  if (!live2dApp || key === currentModelKey) return;
+
+  const url = getModelURL(key);
+  if (!url) {
+    addMessage("bot", `Unknown model: ${key}`);
+    return;
+  }
+
+  const { Live2DModel } = require("pixi-live2d-display");
+
+  let newModel;
+  try {
+    newModel = await Live2DModel.from(url, { autoInteract: true });
+  } catch (err) {
+    addMessage("bot", `[live2d] Failed to load ${key}: ${String(err.message || err)}`);
+    return;
+  }
+
+  // Remove old model
+  if (model) {
+    live2dApp.stage.removeChild(model);
+    model.destroy();
+  }
+
+  model = newModel;
+  currentModelKey = key;
+  live2dApp.stage.addChild(model);
+  model.anchor.set(0.5, 0.5);
+  fitLive2DModel();
+}
+
+function applyModelScale() {
   if (!model || !live2dApp) return;
-  live2dApp.resize();
   const { width, height } = live2dApp.screen;
-  const scale = Math.min(width / model.width, height / model.height) * 0.9;
+  const sizeFactor = Number(avatarSizeEl.value) / 100;
+  const baseScale = Math.min(width / model.width, height / model.height);
+  const scale = baseScale * sizeFactor;
+  const scaledH = model.height * scale;
   model.scale.set(scale);
   model.x = width * 0.5;
-  model.y = height * 0.96;
-  model.anchor.set(0.5, 1);
+  if (scaledH <= height) {
+    model.y = height - scaledH * 0.5;
+  } else {
+    model.y = height * 0.5;
+  }
+}
+
+function fitLive2DModel() {
+  if (!live2dApp) return;
+  live2dApp.resize();
+  applyModelScale();
 }
 
 function getSupportedMimeType() {
@@ -396,6 +483,20 @@ pinTopEl.addEventListener("change", () => {
 
 opacityEl.addEventListener("input", () => {
   ipcRenderer.send("overlay:set-opacity", Number(opacityEl.value) / 100);
+});
+
+modelSelectEl.addEventListener("change", () => {
+  swapModel(modelSelectEl.value);
+});
+
+let sizeRafPending = false;
+avatarSizeEl.addEventListener("input", () => {
+  if (sizeRafPending) return;
+  sizeRafPending = true;
+  requestAnimationFrame(() => {
+    sizeRafPending = false;
+    applyModelScale();
+  });
 });
 
 visionEnabledEl.addEventListener("change", () => {

@@ -185,6 +185,15 @@ button:hover {
   vertical-align: middle;
 }
 
+#model-select {
+  padding: 2px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(3, 7, 18, 0.5);
+  color: var(--text);
+  font-size: 12px;
+}
+
 #capture-interval {
   width: 54px;
   padding: 2px 4px;
