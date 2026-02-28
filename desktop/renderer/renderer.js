@@ -60,6 +60,7 @@ let mediaRecorder = null;
 let mediaStream = null;
 let isRecording = false;
 let recorderChunks = [];
+const AVATAR_WINDOW_BASE = { width: 300, height: 350 };
 const WAKE_WORD = "babe";
 const WAKE_WORD_PREFIX = /^(?:hey\s+)?babe\b[\s,:;.!?-]*/i;
 
@@ -306,8 +307,9 @@ function applyModelScale() {
   const { width, height } = live2dApp.screen;
   const sliderValue = Number(avatarSizeEl.value);
   const sizeFactor = Math.max(0.1, Number.isFinite(sliderValue) ? sliderValue / 100 : 1);
+  const visualScaleFactor = Math.min(sizeFactor, 1);
   const baseScale = Math.min(width / modelBaseWidth, height / modelBaseHeight);
-  const scale = baseScale * sizeFactor;
+  const scale = baseScale * visualScaleFactor;
   const scaledH = modelBaseHeight * scale;
   model.scale.set(scale);
   model.x = width * 0.5;
@@ -316,6 +318,17 @@ function applyModelScale() {
   } else {
     model.y = height * 0.5;
   }
+}
+
+function syncAvatarWindowSize() {
+  const sliderValue = Number(avatarSizeEl.value);
+  const sizeFactor = Math.max(1, Number.isFinite(sliderValue) ? sliderValue / 100 : 1);
+  const targetWidth = Math.round(AVATAR_WINDOW_BASE.width * sizeFactor);
+  const targetHeight = Math.round(AVATAR_WINDOW_BASE.height * sizeFactor);
+  ipcRenderer.send("overlay:avatar-window-size", {
+    width: targetWidth,
+    height: targetHeight,
+  });
 }
 
 function fitLive2DModel() {
@@ -537,6 +550,7 @@ avatarSizeEl.addEventListener("input", () => {
   sizeRafPending = true;
   requestAnimationFrame(() => {
     sizeRafPending = false;
+    syncAvatarWindowSize();
     applyModelScale();
   });
 });
@@ -670,6 +684,9 @@ function setChatExpanded(expanded) {
     overlayRoot.classList.add("avatar-only");
   }
   ipcRenderer.send("overlay:set-chat-expanded", expanded);
+  if (!expanded) {
+    setTimeout(syncAvatarWindowSize, 0);
+  }
   // Re-fit avatar after window resize settles
   setTimeout(fitLive2DModel, 150);
 }

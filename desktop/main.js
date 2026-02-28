@@ -916,3 +916,12 @@ ipcMain.on("overlay:set-chat-expanded", (_event, expanded) => {
     mainWindow.setSize(AVATAR_ONLY_SIZE.width, AVATAR_ONLY_SIZE.height, true);
   }
 });
+
+ipcMain.on("overlay:avatar-window-size", (_event, payload) => {
+  if (!mainWindow || chatExpanded) return;
+  const body = payload && typeof payload === "object" ? payload : {};
+  const width = Math.max(AVATAR_ONLY_SIZE.width, Math.round(Number(body.width) || AVATAR_ONLY_SIZE.width));
+  const height = Math.max(AVATAR_ONLY_SIZE.height, Math.round(Number(body.height) || AVATAR_ONLY_SIZE.height));
+  mainWindow.setMinimumSize(200, 200);
+  mainWindow.setSize(width, height, true);
+});
