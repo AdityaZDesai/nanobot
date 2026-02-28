@@ -513,7 +513,11 @@ class BackendBridge {
 
   _logToOverlay(text) {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("backend:log", text);
+      try {
+        if (!mainWindow.webContents.isDestroyed()) {
+          mainWindow.webContents.send("backend:log", text);
+        }
+      } catch (_) {}
     }
   }
 
@@ -562,7 +566,11 @@ class BackendBridge {
       this.child = null;
 
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("backend:exit", code);
+        try {
+          if (!mainWindow.webContents.isDestroyed()) {
+            mainWindow.webContents.send("backend:exit", code);
+          }
+        } catch (_) {}
       }
 
       setTimeout(() => {
@@ -623,7 +631,11 @@ class BackendBridge {
         const msg = JSON.parse(line);
         if (msg.type === "ready") {
           if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send("backend:ready");
+            try {
+              if (!mainWindow.webContents.isDestroyed()) {
+                mainWindow.webContents.send("backend:ready");
+              }
+            } catch (_) {}
           }
           continue;
         }
@@ -639,7 +651,11 @@ class BackendBridge {
         }
       } catch (err) {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send("backend:log", String(err));
+          try {
+            if (!mainWindow.webContents.isDestroyed()) {
+              mainWindow.webContents.send("backend:log", String(err));
+            }
+          } catch (_) {}
         }
       }
     }
@@ -680,6 +696,14 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
   mainWindow.on("closed", () => {
     mainWindow = null;
+  });
+
+  // Detect renderer crashes and log the reason
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    console.error("[main] Renderer process gone:", details.reason, details.exitCode);
+  });
+  mainWindow.webContents.on("crashed", (_event, killed) => {
+    console.error("[main] Renderer crashed, killed:", killed);
   });
 }
 
@@ -817,6 +841,14 @@ ipcMain.handle("overlay:send", async (_event, requestPayload) => {
 
 ipcMain.handle("overlay:get-proactive-status", () => {
   return proactiveCompanion.getStatus();
+});
+
+ipcMain.on("renderer-error", (_event, errorStr) => {
+  console.error("[main] Renderer error:", errorStr);
+});
+
+ipcMain.on("renderer-log", (_event, msg) => {
+  console.log(msg);
 });
 
 ipcMain.on("overlay:set-proactive", (_event, enabled) => {

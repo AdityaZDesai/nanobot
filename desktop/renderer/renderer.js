@@ -3,6 +3,24 @@ const PIXI = require("pixi.js");
 const path = require("path");
 const { pathToFileURL } = require("url");
 
+// Catch renderer-process errors that would otherwise silently crash
+window.addEventListener("error", (e) => {
+  console.error("[renderer] Uncaught error:", e.error || e.message);
+  ipcRenderer.send("renderer-error", String(e.error?.stack || e.message));
+});
+window.addEventListener("unhandledrejection", (e) => {
+  console.error("[renderer] Unhandled rejection:", e.reason);
+  ipcRenderer.send("renderer-error", String(e.reason?.stack || e.reason));
+});
+process.on("uncaughtException", (err) => {
+  console.error("[renderer] process uncaughtException:", err);
+  ipcRenderer.send("renderer-error", String(err.stack || err));
+});
+
+// AvatarController is lazy-loaded because Three.js uses ESM modules
+// that can't be require()'d at the top level
+let _AvatarControllerClass = null;
+
 globalThis.PIXI = PIXI;
 
 const cubism2RuntimePath = path.join(__dirname, "vendor", "live2d.min.js");
@@ -10,18 +28,20 @@ const cubism4CorePath = require.resolve("@ai-zen/live2d-core/live2dcubismcore.mi
 
 const MODEL_MAP = {
   // --- Cubism 4 (moc3) ---
-  hiyori:      { local: path.join(__dirname, "models", "Hiyori", "Hiyori.model3.json") },
+  hiyori:      { type: "live2d", local: path.join(__dirname, "models", "Hiyori", "Hiyori.model3.json") },
   // --- Cubism 2 (moc) ---
-  koharu:      { pkg: "live2d-widget-model-koharu/assets/koharu.model.json" },
-  shizuku:     { pkg: "live2d-widget-model-shizuku/assets/shizuku.model.json" },
-  miku:        { pkg: "live2d-widget-model-miku/assets/miku.model.json" },
-  hijiki:      { pkg: "live2d-widget-model-hijiki/assets/hijiki.model.json" },
-  tororo:      { pkg: "live2d-widget-model-tororo/assets/tororo.model.json" },
-  haruto:      { pkg: "live2d-widget-model-haruto/assets/haruto.model.json" },
-  wanko:       { pkg: "live2d-widget-model-wanko/assets/wanko.model.json" },
-  z16:         { pkg: "live2d-widget-model-z16/assets/z16.model.json" },
-  "ni-j":      { pkg: "live2d-widget-model-ni-j/assets/ni-j.model.json" },
-  epsilon2_1:  { pkg: "live2d-widget-model-epsilon2_1/assets/Epsilon2.1.model.json" },
+  koharu:      { type: "live2d", pkg: "live2d-widget-model-koharu/assets/koharu.model.json" },
+  shizuku:     { type: "live2d", pkg: "live2d-widget-model-shizuku/assets/shizuku.model.json" },
+  miku:        { type: "live2d", pkg: "live2d-widget-model-miku/assets/miku.model.json" },
+  hijiki:      { type: "live2d", pkg: "live2d-widget-model-hijiki/assets/hijiki.model.json" },
+  tororo:      { type: "live2d", pkg: "live2d-widget-model-tororo/assets/tororo.model.json" },
+  haruto:      { type: "live2d", pkg: "live2d-widget-model-haruto/assets/haruto.model.json" },
+  wanko:       { type: "live2d", pkg: "live2d-widget-model-wanko/assets/wanko.model.json" },
+  z16:         { type: "live2d", pkg: "live2d-widget-model-z16/assets/z16.model.json" },
+  "ni-j":      { type: "live2d", pkg: "live2d-widget-model-ni-j/assets/ni-j.model.json" },
+  epsilon2_1:  { type: "live2d", pkg: "live2d-widget-model-epsilon2_1/assets/Epsilon2.1.model.json" },
+  // --- Three.js 3D (glb) ---
+  "3d-default": { type: "three", local: path.join(__dirname, "models", "3d", "default.glb") },
 };
 
 let currentModelKey = "hiyori";
@@ -46,8 +66,12 @@ const proactiveChanceEl = document.getElementById("proactive-chance");
 const proactiveQuietStartEl = document.getElementById("proactive-quiet-start");
 const proactiveQuietEndEl = document.getElementById("proactive-quiet-end");
 const canvas = document.getElementById("live2d-canvas");
+const threeCanvas = document.getElementById("three-canvas");
 const modelSelectEl = document.getElementById("model-select");
 const avatarSizeEl = document.getElementById("avatar-size");
+
+let avatarMode = "live2d"; // "live2d" or "three"
+let avatar3d = null;       // AvatarController instance
 
 let ttsEnabled = true;
 let model = null;
@@ -361,9 +385,15 @@ function applyEmotion(emotion) {
   if (emotionTimeout) clearTimeout(emotionTimeout);
   currentEmotion = emotion || null;
 
+  // Dispatch to 3D avatar if active
+  if (avatarMode === "three" && avatar3d) {
+    avatar3d.setEmotion(emotion || "neutral");
+    return; // 3D controller handles its own auto-clear
+  }
+
   if (!currentEmotion) return;
 
-  // Auto-clear emotion after 6 seconds
+  // Auto-clear emotion after 6 seconds (Live2D path)
   emotionTimeout = setTimeout(() => {
     currentEmotion = null;
   }, 6000);
@@ -687,9 +717,120 @@ opacityEl.addEventListener("input", () => {
   ipcRenderer.send("overlay:set-opacity", Number(opacityEl.value) / 100);
 });
 
-modelSelectEl.addEventListener("change", () => {
-  swapModel(modelSelectEl.value);
+modelSelectEl.addEventListener("change", async () => {
+  const key = modelSelectEl.value;
+  const entry = MODEL_MAP[key];
+  if (!entry) return;
+
+  if (entry.type === "three") {
+    await switchToThree(key);
+  } else {
+    await switchToLive2D(key);
+  }
 });
+
+async function switchToLive2D(key) {
+  // Tear down 3D if active (releases the Three.js WebGL context)
+  if (avatar3d) {
+    avatar3d.dispose();
+    avatar3d = null;
+  }
+  threeCanvas.style.display = "none";
+  canvas.style.display = "block";
+  avatarMode = "live2d";
+
+  // Always recreate PIXI since we destroy it when switching to 3D
+  currentModelKey = key;
+  return loadLive2D();
+}
+
+function _log3d(msg) {
+  console.log(msg);
+  try { ipcRenderer.send("renderer-log", msg); } catch (_) {}
+}
+
+async function switchToThree(key) {
+  try {
+    _log3d("[3d] step 1: switchToThree starting, key=" + key);
+
+    // Pause screen capture — desktopCapturer can conflict with WebGL init
+    ipcRenderer.send("overlay:set-background-vision", false);
+
+    // Fully destroy PIXI to release its WebGL context
+    if (live2dApp) {
+      _log3d("[3d] step 2: destroying PIXI...");
+      if (model) {
+        live2dApp.stage.removeChild(model);
+        model.destroy();
+        model = null;
+      }
+      live2dApp.destroy(false); // false = keep the canvas DOM element
+      live2dApp = null;
+      _log3d("[3d] step 2: PIXI destroyed");
+    }
+
+    canvas.style.display = "none";
+    threeCanvas.style.display = "block";
+    avatarMode = "three";
+
+    // Wait a frame so the canvas gets layout dimensions after display:block
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    _log3d("[3d] step 3: canvas laid out, size=" + threeCanvas.clientWidth + "x" + threeCanvas.clientHeight);
+
+    // Quick bare WebGL sanity check (probe canvas only)
+    _log3d("[3d] step 4: testing bare WebGL...");
+    const glProbeCanvas = document.createElement("canvas");
+    const testGL = glProbeCanvas.getContext("webgl2") || glProbeCanvas.getContext("webgl");
+    if (!testGL) {
+      throw new Error("WebGL not available on three-canvas");
+    }
+    _log3d("[3d] step 4: bare WebGL OK: " + testGL.getParameter(testGL.VERSION));
+
+    // Lazy-load AvatarController
+    if (!_AvatarControllerClass) {
+      _log3d("[3d] step 5: requiring AvatarController module...");
+      const mod = require("./avatar3d/AvatarController");
+      _AvatarControllerClass = mod.AvatarController;
+      _log3d("[3d] step 5: AvatarController loaded");
+    }
+
+    // Create controller if needed
+    if (!avatar3d) {
+      _log3d("[3d] step 6: creating AvatarController instance...");
+      avatar3d = new _AvatarControllerClass(threeCanvas, getLipSyncValue);
+      _log3d("[3d] step 6: instance created");
+    }
+
+    const entry = MODEL_MAP[key];
+    _log3d("[3d] step 7: loading model: " + entry.local);
+    await avatar3d.loadModel(entry.local);
+    _log3d("[3d] step 8: model loaded, starting render loop");
+    avatar3d.start();
+    currentModelKey = key;
+    _log3d("[3d] step 9: switchToThree complete!");
+
+    // Re-enable screen capture
+    if (visionEnabledEl.checked) {
+      ipcRenderer.send("overlay:set-background-vision", true);
+    }
+  } catch (err) {
+    console.error("[3d] switchToThree error:", err);
+    _log3d("[3d] ERROR: " + String(err.stack || err.message || err));
+    addMessage("bot", `[3d] Failed: ${String(err.message || err)}`);
+    // Fall back to Live2D
+    avatarMode = "live2d";
+    threeCanvas.style.display = "none";
+    canvas.style.display = "block";
+    if (avatar3d) {
+      avatar3d.dispose();
+      avatar3d = null;
+    }
+    loadLive2D();
+    if (visionEnabledEl.checked) {
+      ipcRenderer.send("overlay:set-background-vision", true);
+    }
+  }
+}
 
 let sizeRafPending = false;
 avatarSizeEl.addEventListener("input", () => {
@@ -831,7 +972,12 @@ function setChatExpanded(expanded) {
   }
   ipcRenderer.send("overlay:set-chat-expanded", expanded);
   // Re-fit avatar after window resize settles
-  setTimeout(fitLive2DModel, 150);
+  setTimeout(() => {
+    if (avatarMode === "live2d") {
+      fitLive2DModel();
+    }
+    // Three.js handles its own resize via window event listener in AvatarRenderer
+  }, 150);
 }
 
 function toggleChat() {

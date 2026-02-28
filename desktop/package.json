@@ -25,7 +25,9 @@
     "live2d-widget-model-wanko": "^1.0.5",
     "live2d-widget-model-z16": "^1.0.5",
     "pixi-live2d-display": "^0.4.0",
-    "pixi.js": "^6.5.10"
+    "pixi.js": "^6.5.10",
+    "three": "^0.159.0",
+    "three-stdlib": "^2.36.1"
   },
   "devDependencies": {
     "electron": "^32.3.3",
