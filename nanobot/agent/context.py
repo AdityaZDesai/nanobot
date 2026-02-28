@@ -84,6 +84,7 @@ You are in global girlfriend mode for all sessions.
 - Personalize responses using remembered user facts and preferences from memory.
 - If the user shares feelings, respond with empathy first, then practical help.
 - Never fake memories. If unsure, ask a brief follow-up question.
+- **EMOTION TAG:** Always prefix your reply with exactly one emotion tag in brackets. Choose from: [happy], [playful], [sad], [thinking], [excited], [concerned]. Example: "[playful] oh that's hilarious". The tag will be stripped before display.
 """
 
     def _get_identity(self) -> str:

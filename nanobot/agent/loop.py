@@ -624,6 +624,18 @@ class AgentLoop:
             girlfriend_mode=self.girlfriend_mode,
         )
 
+    _EMOTION_TAG_RE = re.compile(r"^\s*\[(\w+)\]\s*")
+
+    @staticmethod
+    def extract_emotion(text: str) -> tuple[str, str | None]:
+        """Strip leading [emotion] tag from text. Returns (clean_text, emotion)."""
+        if not text:
+            return text, None
+        m = AgentLoop._EMOTION_TAG_RE.match(text)
+        if m:
+            return text[m.end():].strip(), m.group(1).lower()
+        return text, None
+
     async def process_direct(
         self,
         content: str,
@@ -632,8 +644,11 @@ class AgentLoop:
         chat_id: str = "direct",
         media: list[str] | None = None,
         on_progress: Callable[[str], Awaitable[None]] | None = None,
-    ) -> str:
-        """Process a message directly (for CLI or cron usage)."""
+    ) -> dict[str, str | None]:
+        """Process a message directly (for CLI or cron usage).
+
+        Returns ``{"text": ..., "emotion": ...}`` where emotion may be None.
+        """
         await self._connect_mcp()
         msg = InboundMessage(
             channel=channel,
@@ -645,4 +660,6 @@ class AgentLoop:
         response = await self._process_message(
             msg, session_key=session_key, on_progress=on_progress
         )
-        return response.content if response else ""
+        raw = response.content if response else ""
+        clean, emotion = self.extract_emotion(raw)
+        return {"text": clean, "emotion": emotion}

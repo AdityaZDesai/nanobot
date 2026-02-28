@@ -61,6 +61,18 @@ let recorderChunks = [];
 const WAKE_WORD = "babe";
 const WAKE_WORD_PREFIX = /^(?:hey\s+)?babe\b[\s,:;.!?-]*/i;
 
+// --- Lip sync state ---
+let audioContext = null;
+let analyser = null;
+let isSpeaking = false;
+
+// --- Idle animation state ---
+let nextBlinkTime = 0;
+let blinkPhase = 0; // 0=open, 1=closing, 2=opening
+let blinkProgress = 0;
+let currentEmotion = null;
+let emotionTimeout = null;
+
 async function ensureCubism2Runtime() {
   if (window.Live2D && window.Live2DModelWebGL) {
     return;
@@ -116,6 +128,7 @@ function addSystemMessage(text) {
 }
 
 function stopSpeechPlayback() {
+  isSpeaking = false;
   if (currentAudio) {
     currentAudio.pause();
     currentAudio = null;
@@ -124,6 +137,38 @@ function stopSpeechPlayback() {
     URL.revokeObjectURL(currentAudioUrl);
     currentAudioUrl = null;
   }
+}
+
+function startLipSync(audioEl) {
+  if (!audioContext) {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  // Resume in case browser/Electron suspended the context
+  if (audioContext.state === "suspended") {
+    audioContext.resume();
+  }
+  const source = audioContext.createMediaElementSource(audioEl);
+  analyser = audioContext.createAnalyser();
+  analyser.fftSize = 256;
+  source.connect(analyser);
+  analyser.connect(audioContext.destination);
+  isSpeaking = true;
+}
+
+function getLipSyncValue() {
+  if (!analyser || !isSpeaking) return 0;
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteFrequencyData(data);
+  // Focus on voice frequency range (roughly bins 2-20 for speech fundamentals)
+  let sum = 0;
+  const start = 2;
+  const end = Math.min(20, data.length);
+  for (let i = start; i < end; i++) {
+    sum += data[i];
+  }
+  const avg = sum / (end - start);
+  // Normalize to 0-1 with some amplification
+  return Math.min(1, avg / 128);
 }
 
 async function speak(text) {
@@ -150,6 +195,8 @@ async function speak(text) {
   currentAudio.onended = () => {
     stopSpeechPlayback();
   };
+
+  startLipSync(currentAudio);
   await currentAudio.play();
 }
 
@@ -164,8 +211,24 @@ async function sendMessage() {
 
   try {
     const response = await ipcRenderer.invoke("overlay:send", { text });
-    addMessage("bot", response || "(No response)");
-    await speak(response || "");
+    // response can be string (old) or { text, emotion } (new)
+    let replyText = "";
+    let emotion = null;
+    if (typeof response === "object" && response !== null) {
+      replyText = response.text || "";
+      emotion = response.emotion || null;
+    } else {
+      replyText = response || "";
+    }
+
+    addMessage("bot", replyText || "(No response)");
+
+    if (emotion) {
+      applyEmotion(emotion);
+    }
+
+    await speak(replyText);
+
     if (model && model.motion) {
       try {
         model.motion("tap_body");
@@ -226,6 +289,7 @@ async function loadLive2D() {
 
   fitLive2DModel();
   window.addEventListener("resize", fitLive2DModel);
+  hookModelUpdate(model);
 }
 
 async function swapModel(key) {
@@ -257,6 +321,7 @@ async function swapModel(key) {
   currentModelKey = key;
   live2dApp.stage.addChild(model);
   model.anchor.set(0.5, 0.5);
+  hookModelUpdate(model);
   fitLive2DModel();
 }
 
@@ -280,6 +345,143 @@ function fitLive2DModel() {
   if (!live2dApp) return;
   live2dApp.resize();
   applyModelScale();
+}
+
+// --- Emotion → parameter presets ---
+const EMOTION_PRESETS = {
+  happy:     { ParamEyeLOpen: 0.8, ParamEyeROpen: 0.8, ParamMouthForm: 1, ParamAngleX: 5 },
+  playful:   { ParamEyeLOpen: 0.7, ParamEyeROpen: 0.7, ParamMouthForm: 1, ParamAngleZ: 8 },
+  sad:       { ParamBrowLY: -0.5, ParamBrowRY: -0.5, ParamEyeLOpen: 0.6, ParamEyeROpen: 0.6 },
+  concerned: { ParamBrowLY: -0.3, ParamBrowRY: -0.3, ParamEyeLOpen: 0.7, ParamEyeROpen: 0.7 },
+  excited:   { ParamEyeLOpen: 1, ParamEyeROpen: 1, ParamAngleY: 5, ParamMouthForm: 0.8 },
+  thinking:  { ParamEyeBallX: -0.5, ParamEyeBallY: 0.5, ParamEyeLOpen: 0.75, ParamEyeROpen: 0.75 },
+};
+
+function applyEmotion(emotion) {
+  if (emotionTimeout) clearTimeout(emotionTimeout);
+  currentEmotion = emotion || null;
+
+  if (!currentEmotion) return;
+
+  // Auto-clear emotion after 6 seconds
+  emotionTimeout = setTimeout(() => {
+    currentEmotion = null;
+  }, 6000);
+}
+
+// --- Hook into model's update cycle ---
+// The internal update flow is: motions → save → expressions → eyeBlink →
+// focus → naturalMovements → physics → pose → emit("beforeModelUpdate") →
+// model.update() [commits params] → loadParameters() [restores saved state].
+// We listen to "beforeModelUpdate" so our params are set RIGHT BEFORE commit.
+const idleStartTime = performance.now();
+
+function hookModelUpdate(mdl) {
+  if (!mdl || !mdl.internalModel) return;
+  const internal = mdl.internalModel;
+
+  // Remove any previous listener if we're re-hooking after a model swap
+  internal.removeAllListeners("beforeModelUpdate");
+
+  // Hook into the exact right point: after motions/physics/pose are applied,
+  // but BEFORE model.update() commits params to the native model.
+  internal.on("beforeModelUpdate", () => {
+    const core = internal.coreModel;
+
+    // Cubism 4: addParameterValueById(id, value, weight)
+    // Cubism 2: addToParamFloat(index, value)
+    const isCubism4 = typeof core.addParameterValueById === "function";
+    const isCubism2 = typeof core.addToParamFloat === "function";
+
+    const t = (performance.now() - idleStartTime) / 1000;
+
+    // --- Lip sync: override mouth open param with audio amplitude ---
+    if (isSpeaking) {
+      const mouthVal = getLipSyncValue();
+      if (mouthVal > 0) {
+        if (isCubism4) {
+          // setParameterValueById replaces the value (not additive) so our
+          // audio amplitude takes full control of the mouth during speech
+          try { core.setParameterValueById("ParamMouthOpenY", mouthVal); } catch (_e) {}
+        } else if (isCubism2) {
+          try { core.setParamFloat("PARAM_MOUTH_OPEN_Y", mouthVal); } catch (_e) {}
+        }
+      }
+    }
+
+    // --- Breathing (~3s cycle) ---
+    const breathVal = 0.5 * Math.sin(t * 2.094);
+    if (isCubism4) {
+      try { core.addParameterValueById("ParamBreath", breathVal); } catch (_e) {}
+    } else if (isCubism2) {
+      try { core.addToParamFloat(core.getParamIndex("PARAM_BREATH"), breathVal); } catch (_e) {}
+    }
+
+    // --- Head sway (~7s X, ~9s Y) ---
+    if (isCubism4) {
+      try { core.addParameterValueById("ParamAngleX", 3 * Math.sin(t * 0.898), 0.5); } catch (_e) {}
+      try { core.addParameterValueById("ParamAngleY", 2 * Math.sin(t * 0.698), 0.5); } catch (_e) {}
+    } else if (isCubism2) {
+      try { core.addToParamFloat(core.getParamIndex("PARAM_ANGLE_X"), 3 * Math.sin(t * 0.898) * 0.5); } catch (_e) {}
+      try { core.addToParamFloat(core.getParamIndex("PARAM_ANGLE_Y"), 2 * Math.sin(t * 0.698) * 0.5); } catch (_e) {}
+    }
+
+    // --- Body sway (~11s, subtle) ---
+    if (isCubism4) {
+      try { core.addParameterValueById("ParamBodyAngleX", 1.5 * Math.sin(t * 0.571), 0.3); } catch (_e) {}
+    } else if (isCubism2) {
+      try { core.addToParamFloat(core.getParamIndex("PARAM_BODY_ANGLE_X"), 1.5 * Math.sin(t * 0.571) * 0.3); } catch (_e) {}
+    }
+
+    // --- Gaze drift (~5s X, ~6s Y) ---
+    if (isCubism4) {
+      try { core.addParameterValueById("ParamEyeBallX", 0.3 * Math.sin(t * 1.257), 0.4); } catch (_e) {}
+      try { core.addParameterValueById("ParamEyeBallY", 0.2 * Math.sin(t * 1.047), 0.4); } catch (_e) {}
+    } else if (isCubism2) {
+      try { core.addToParamFloat(core.getParamIndex("PARAM_EYE_BALL_X"), 0.3 * Math.sin(t * 1.257) * 0.4); } catch (_e) {}
+      try { core.addToParamFloat(core.getParamIndex("PARAM_EYE_BALL_Y"), 0.2 * Math.sin(t * 1.047) * 0.4); } catch (_e) {}
+    }
+
+    // --- Eye blink ---
+    const nowMs = performance.now();
+    if (blinkPhase === 0 && nowMs >= nextBlinkTime) {
+      blinkPhase = 1;
+      blinkProgress = 0;
+    }
+    if (blinkPhase === 1) {
+      blinkProgress += 0.15;
+      if (blinkProgress >= 1) { blinkPhase = 2; blinkProgress = 1; }
+    } else if (blinkPhase === 2) {
+      blinkProgress -= 0.12;
+      if (blinkProgress <= 0) {
+        blinkPhase = 0;
+        blinkProgress = 0;
+        nextBlinkTime = nowMs + 2000 + Math.random() * 4000;
+      }
+    }
+    if (blinkPhase !== 0) {
+      const blinkVal = 1 - blinkProgress; // 1=open, 0=closed
+      if (isCubism4) {
+        try { core.setParameterValueById("ParamEyeLOpen", blinkVal); } catch (_e) {}
+        try { core.setParameterValueById("ParamEyeROpen", blinkVal); } catch (_e) {}
+      } else if (isCubism2) {
+        try { core.setParamFloat(core.getParamIndex("PARAM_EYE_L_OPEN"), blinkVal); } catch (_e) {}
+        try { core.setParamFloat(core.getParamIndex("PARAM_EYE_R_OPEN"), blinkVal); } catch (_e) {}
+      }
+    }
+
+    // --- Emotion overrides ---
+    if (currentEmotion && EMOTION_PRESETS[currentEmotion]) {
+      const preset = EMOTION_PRESETS[currentEmotion];
+      for (const [param, val] of Object.entries(preset)) {
+        if (isCubism4) {
+          try { core.addParameterValueById(param, val, 0.7); } catch (_e) {}
+        } else if (isCubism2) {
+          try { core.addToParamFloat(core.getParamIndex(param), val * 0.7); } catch (_e) {}
+        }
+      }
+    }
+  });
 }
 
 function getSupportedMimeType() {

@@ -121,8 +121,9 @@ class DesktopBridge:
                 if isinstance(raw_media, list)
                 else []
             )
-            response = await self.agent_loop.process_direct(text, session, media=media)
-            return {"text": response or ""}
+            result = await self.agent_loop.process_direct(text, session, media=media)
+            # result is {"text": ..., "emotion": ...}
+            return {"text": result.get("text", ""), "emotion": result.get("emotion")}
 
         if request.req_type == "proactive":
             if not self.agent_loop:
@@ -150,8 +151,8 @@ class DesktopBridge:
                 f"Local time: {local_time or 'unknown'}."
             )
 
-            response = await self.agent_loop.process_direct(proactive_prompt, session, media=media)
-            text = (response or "").strip()
+            result = await self.agent_loop.process_direct(proactive_prompt, session, media=media)
+            text = (result.get("text", "") if isinstance(result, dict) else (result or "")).strip()
             if text == "__SKIP__":
                 return {"text": ""}
             return {"text": self._shorten_proactive_text(text)}

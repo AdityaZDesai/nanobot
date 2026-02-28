@@ -324,18 +324,19 @@ def gateway(
     # Set cron callback (needs agent)
     async def on_cron_job(job: CronJob) -> str | None:
         """Execute a cron job through the agent."""
-        response = await agent.process_direct(
+        result = await agent.process_direct(
             job.payload.message,
             session_key=f"cron:{job.id}",
             channel=job.payload.channel or "cli",
             chat_id=job.payload.to or "direct",
         )
+        response = result.get("text", "") if isinstance(result, dict) else (result or "")
         if job.payload.deliver and job.payload.to:
             from nanobot.bus.events import OutboundMessage
             await bus.publish_outbound(OutboundMessage(
                 channel=job.payload.channel or "cli",
                 chat_id=job.payload.to,
-                content=response or ""
+                content=response
             ))
         return response
     cron.on_job = on_cron_job
@@ -367,13 +368,14 @@ def gateway(
         async def _silent(*_args, **_kwargs):
             pass
 
-        return await agent.process_direct(
+        result = await agent.process_direct(
             tasks,
             session_key="heartbeat",
             channel=channel,
             chat_id=chat_id,
             on_progress=_silent,
         )
+        return result.get("text", "") if isinstance(result, dict) else (result or "")
 
     async def on_heartbeat_notify(response: str) -> None:
         """Deliver a heartbeat response to the user's channel."""
@@ -497,7 +499,8 @@ def agent(
         # Single message mode — direct call, no bus needed
         async def run_once():
             with _thinking_ctx():
-                response = await agent_loop.process_direct(message, session_id, on_progress=_cli_progress)
+                result = await agent_loop.process_direct(message, session_id, on_progress=_cli_progress)
+                response = result.get("text", "") if isinstance(result, dict) else (result or "")
             _print_agent_response(response, render_markdown=markdown)
             await agent_loop.close_mcp()
 
@@ -973,12 +976,13 @@ def cron_run(
     result_holder = []
 
     async def on_job(job: CronJob) -> str | None:
-        response = await agent_loop.process_direct(
+        result = await agent_loop.process_direct(
             job.payload.message,
             session_key=f"cron:{job.id}",
             channel=job.payload.channel or "cli",
             chat_id=job.payload.to or "direct",
         )
+        response = result.get("text", "") if isinstance(result, dict) else (result or "")
         result_holder.append(response)
         return response
 

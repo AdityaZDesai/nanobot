@@ -1,3 +1,4 @@
+require("dotenv").config();
 const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, nativeImage, desktopCapturer, screen, systemPreferences, session } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
@@ -811,7 +812,7 @@ ipcMain.handle("overlay:send", async (_event, requestPayload) => {
     media,
   });
   proactiveCompanion.markUserActivity();
-  return responsePayload.text || "";
+  return { text: responsePayload.text || "", emotion: responsePayload.emotion || null };
 });
 
 ipcMain.handle("overlay:get-proactive-status", () => {
