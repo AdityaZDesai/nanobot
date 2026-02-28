@@ -825,7 +825,10 @@ async function switchToThree(key) {
       avatar3d.dispose();
       avatar3d = null;
     }
-    loadLive2D();
+    Promise.resolve(loadLive2D()).catch((fallbackErr) => {
+      console.error("[3d] Live2D fallback failed:", fallbackErr);
+      addMessage("bot", `[3d] Live2D fallback failed: ${String(fallbackErr.message || fallbackErr)}`);
+    });
     if (visionEnabledEl.checked) {
       ipcRenderer.send("overlay:set-background-vision", true);
     }

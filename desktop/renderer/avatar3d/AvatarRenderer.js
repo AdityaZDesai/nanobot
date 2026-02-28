@@ -1,4 +1,5 @@
 const fs = require("fs");
+const nodePath = require("path");
 const { ipcRenderer } = require("electron");
 
 const TARGET_FPS = 30;
