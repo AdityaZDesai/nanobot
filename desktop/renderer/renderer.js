@@ -54,6 +54,8 @@ let model = null;
 let currentAudio = null;
 let currentAudioUrl = null;
 let live2dApp = null;
+let modelBaseWidth = 0;
+let modelBaseHeight = 0;
 let mediaRecorder = null;
 let mediaStream = null;
 let isRecording = false;
@@ -223,6 +225,7 @@ async function loadLive2D() {
   live2dApp = app;
   app.stage.addChild(model);
   model.anchor.set(0.5, 0.5);
+  cacheModelBaseSize();
 
   fitLive2DModel();
   window.addEventListener("resize", fitLive2DModel);
@@ -257,16 +260,55 @@ async function swapModel(key) {
   currentModelKey = key;
   live2dApp.stage.addChild(model);
   model.anchor.set(0.5, 0.5);
+  cacheModelBaseSize();
   fitLive2DModel();
+}
+
+function cacheModelBaseSize() {
+  if (!model) {
+    modelBaseWidth = 0;
+    modelBaseHeight = 0;
+    return;
+  }
+
+  let baseWidth = 0;
+  let baseHeight = 0;
+
+  try {
+    const bounds = model.getLocalBounds();
+    baseWidth = Math.abs(Number(bounds.width)) || 0;
+    baseHeight = Math.abs(Number(bounds.height)) || 0;
+  } catch (_err) {
+  }
+
+  if (!(baseWidth > 0) || !(baseHeight > 0)) {
+    const scaleX = Math.abs(Number(model.scale && model.scale.x)) || 1;
+    const scaleY = Math.abs(Number(model.scale && model.scale.y)) || 1;
+    baseWidth = Math.abs(Number(model.width)) / scaleX;
+    baseHeight = Math.abs(Number(model.height)) / scaleY;
+  }
+
+  if (baseWidth > 0 && baseHeight > 0) {
+    modelBaseWidth = baseWidth;
+    modelBaseHeight = baseHeight;
+  }
 }
 
 function applyModelScale() {
   if (!model || !live2dApp) return;
+  if (!(modelBaseWidth > 0) || !(modelBaseHeight > 0)) {
+    cacheModelBaseSize();
+  }
+  if (!(modelBaseWidth > 0) || !(modelBaseHeight > 0)) {
+    return;
+  }
+
   const { width, height } = live2dApp.screen;
-  const sizeFactor = Number(avatarSizeEl.value) / 100;
-  const baseScale = Math.min(width / model.width, height / model.height);
+  const sliderValue = Number(avatarSizeEl.value);
+  const sizeFactor = Math.max(0.1, Number.isFinite(sliderValue) ? sliderValue / 100 : 1);
+  const baseScale = Math.min(width / modelBaseWidth, height / modelBaseHeight);
   const scale = baseScale * sizeFactor;
-  const scaledH = model.height * scale;
+  const scaledH = modelBaseHeight * scale;
   model.scale.set(scale);
   model.x = width * 0.5;
   if (scaledH <= height) {
