@@ -3,6 +3,8 @@
 import json
 import json_repair
 import os
+import re
+import uuid
 from typing import Any
 
 import litellm
@@ -235,7 +237,15 @@ class LiteLLMProvider(LLMProvider):
         # Pass extra headers (e.g. APP-Code for AiHubMix)
         if self.extra_headers:
             kwargs["extra_headers"] = self.extra_headers
-        
+
+        # Groq models frequently emit invalid native function-call payloads.
+        # Prefer text-based tool calls up front for higher reliability.
+        if tools and self._prefer_text_tool_calls(model, original_model):
+            try:
+                return await self._retry_with_text_tools(kwargs, tools)
+            except Exception:
+                pass
+
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
@@ -244,12 +254,244 @@ class LiteLLMProvider(LLMProvider):
             response = await acompletion(**kwargs)
             return self._parse_response(response)
         except Exception as e:
+            # Some models (Llama on Groq) generate malformed tool calls in XML
+            # format like <function=exec{"command":"..."}></function> which the
+            # provider rejects.  Try to salvage the tool call from the error.
+            salvaged = self._try_salvage_tool_call(e)
+            if salvaged:
+                return salvaged
+
+            # If native tool calling failed, retry with text-based tool
+            # descriptions so the model outputs JSON we can parse instead.
+            if tools and self._is_tool_call_failure(e):
+                try:
+                    return await self._retry_with_text_tools(kwargs, tools)
+                except Exception:
+                    pass  # Fall through to error return
+
             # Return error as content for graceful handling
             return LLMResponse(
                 content=f"Error calling LLM: {str(e)}",
                 finish_reason="error",
             )
     
+    @staticmethod
+    def _is_tool_call_failure(exc: Exception) -> bool:
+        """Check if the exception is a tool call formatting failure."""
+        err = str(exc).lower()
+        return any(s in err for s in (
+            "tool_use_failed",
+            "failed to call a function",
+            "failed_generation",
+            "tool call validation failed",
+        ))
+
+    @staticmethod
+    def _prefer_text_tool_calls(model: str, original_model: str) -> bool:
+        """Return True for model/provider combos with flaky native tool calls."""
+        joined = f"{model} {original_model}".lower()
+        return "groq/" in joined or " groq" in joined
+
+    @staticmethod
+    def _strip_native_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Convert tool-heavy transcripts into plain chat messages for retry."""
+        cleaned: list[dict[str, Any]] = []
+        for msg in messages:
+            role = msg.get("role")
+            if role == "tool":
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    content = json.dumps(content, ensure_ascii=False)
+                elif content is None:
+                    content = ""
+                cleaned.append(
+                    {
+                        "role": "assistant",
+                        "content": f"Tool result ({msg.get('name', 'tool')}): {content}",
+                    }
+                )
+                continue
+
+            if role == "assistant":
+                content = msg.get("content")
+                if not content:
+                    # Skip assistant stubs that only carried tool_calls.
+                    continue
+                cleaned.append({"role": "assistant", "content": content})
+                continue
+
+            # Keep user/system with plain role + content only.
+            if role in {"system", "user"}:
+                cleaned.append({"role": role, "content": msg.get("content", "")})
+
+        return cleaned
+
+    @staticmethod
+    def _tools_to_text_instruction(tools: list[dict[str, Any]]) -> str:
+        """Convert tool definitions into a text instruction for the model."""
+        lines = [
+            "IMPORTANT: You must call tools by outputting EXACTLY this JSON format "
+            "(no markdown, no code fences, just raw JSON on its own line):",
+            '{"tool_call": {"name": "TOOL_NAME", "arguments": {ARGS}}}',
+            "",
+            "Available tools:",
+        ]
+        for tool in tools:
+            func = tool.get("function", tool)
+            name = func.get("name", "unknown")
+            desc = func.get("description", "")
+            params = func.get("parameters", {})
+            props = params.get("properties", {})
+            required = params.get("required", [])
+            param_strs = []
+            for pname, pdef in props.items():
+                req = " (required)" if pname in required else ""
+                param_strs.append(f'    "{pname}": {pdef.get("type", "string")}{req} — {pdef.get("description", "")}')
+            lines.append(f"- {name}: {desc}")
+            if param_strs:
+                lines.append("  Parameters:")
+                lines.extend(param_strs)
+        lines.append("")
+        lines.append("After the tool runs, you'll see the result and can respond to the user.")
+        return "\n".join(lines)
+
+    async def _retry_with_text_tools(
+        self,
+        original_kwargs: dict[str, Any],
+        tools: list[dict[str, Any]],
+    ) -> LLMResponse:
+        """Retry a failed tool-call request using text-based tool descriptions.
+
+        Strips native ``tools``/``tool_choice`` from the request and injects a
+        system message that tells the model to output tool calls as JSON text.
+        The response is then scanned for parseable tool-call JSON.
+        """
+        retry_kwargs = dict(original_kwargs)
+        retry_kwargs.pop("tools", None)
+        retry_kwargs.pop("tool_choice", None)
+        retry_kwargs["temperature"] = 0
+
+        # Inject tool-as-text instruction before the last user message
+        tool_instruction = self._tools_to_text_instruction(tools)
+        messages = self._strip_native_tool_messages(list(retry_kwargs["messages"]))
+        insert_at = len(messages)
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                insert_at = i
+                break
+        messages.insert(insert_at, {"role": "system", "content": tool_instruction})
+        retry_kwargs["messages"] = self._sanitize_messages(messages)
+
+        response = await acompletion(**retry_kwargs)
+        result = self._parse_response(response)
+
+        # Try to extract tool calls from the plain-text response
+        if result.content and not result.tool_calls:
+            parsed = self._parse_text_tool_calls(result.content)
+            if parsed:
+                # Strip the JSON from displayed content
+                clean = result.content
+                for tc in parsed:
+                    # Remove the JSON line from the content
+                    clean = re.sub(
+                        r'\{["\s]*tool_call["\s]*:.*?\}\s*\}',
+                        "",
+                        clean,
+                        count=1,
+                        flags=re.DOTALL,
+                    )
+                result = LLMResponse(
+                    content=clean.strip() or None,
+                    tool_calls=parsed,
+                    finish_reason="tool_calls",
+                    usage=result.usage,
+                )
+
+        return result
+
+    @staticmethod
+    def _parse_text_tool_calls(text: str) -> list[ToolCallRequest]:
+        """Extract tool calls from model text output.
+
+        Looks for JSON like: {"tool_call": {"name": "exec", "arguments": {...}}}
+        Also handles bare: {"name": "exec", "arguments": {...}}
+        """
+        calls: list[ToolCallRequest] = []
+
+        # Pattern 1: {"tool_call": {"name": ..., "arguments": ...}}
+        for match in re.finditer(r'\{\s*"tool_call"\s*:\s*(\{.*?\})\s*\}', text, re.DOTALL):
+            try:
+                inner = json_repair.loads(match.group(1))
+                if isinstance(inner, dict) and "name" in inner:
+                    calls.append(ToolCallRequest(
+                        id=f"text_{uuid.uuid4().hex[:8]}",
+                        name=inner["name"],
+                        arguments=inner.get("arguments", {}),
+                    ))
+            except Exception:
+                continue
+
+        if calls:
+            return calls
+
+        # Pattern 2: bare {"name": "tool", "arguments": {...}}
+        for match in re.finditer(r'\{\s*"name"\s*:\s*"(\w+)"\s*,\s*"arguments"\s*:\s*(\{.*?\})\s*\}', text, re.DOTALL):
+            try:
+                args = json_repair.loads(match.group(2))
+                calls.append(ToolCallRequest(
+                    id=f"text_{uuid.uuid4().hex[:8]}",
+                    name=match.group(1),
+                    arguments=args if isinstance(args, dict) else {},
+                ))
+            except Exception:
+                continue
+
+        return calls
+
+    @staticmethod
+    def _try_salvage_tool_call(exc: Exception) -> LLMResponse | None:
+        """Attempt to parse a tool call from a provider error.
+
+        Some models (e.g. Llama 3.x on Groq) emit tool calls in an XML-like
+        format that the provider API rejects:
+            <function=exec{"command": "start chrome"}></function>
+        The error JSON often includes ``failed_generation`` with the raw text.
+        We extract the tool name and arguments so the agent loop can still
+        execute the tool.
+        """
+        err_str = str(exc)
+        if "tool_use_failed" not in err_str and "failed_generation" not in err_str:
+            return None
+
+        # Try to extract the failed_generation from the error JSON
+        # Pattern: <function=TOOLNAME{JSON_ARGS}></function>
+        # Also handle: <function=TOOLNAME>{"key": "value"}</function>
+        patterns = [
+            r"<function=(\w+)(\{.*?\})>\s*</function>",       # <function=exec{"cmd":"x"}></function>
+            r"<function=(\w+)>\s*(\{.*?\})\s*</function>",    # <function=exec>{"cmd":"x"}</function>
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, err_str, re.DOTALL)
+            if match:
+                tool_name = match.group(1)
+                try:
+                    args = json_repair.loads(match.group(2))
+                except Exception:
+                    continue
+                if isinstance(args, dict):
+                    return LLMResponse(
+                        content=None,
+                        tool_calls=[ToolCallRequest(
+                            id=f"salvaged_{uuid.uuid4().hex[:8]}",
+                            name=tool_name,
+                            arguments=args,
+                        )],
+                        finish_reason="tool_calls",
+                    )
+
+        return None
+
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""
         choice = response.choices[0]
