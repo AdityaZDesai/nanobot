@@ -1,5 +1,6 @@
 """LiteLLM provider implementation for multi-provider support."""
 
+import asyncio
 import json
 import json_repair
 import os
@@ -251,7 +252,7 @@ class LiteLLMProvider(LLMProvider):
             kwargs["tool_choice"] = "auto"
         
         try:
-            response = await acompletion(**kwargs)
+            response = await self._acompletion_with_retries(kwargs)
             return self._parse_response(response)
         except Exception as e:
             # Some models (Llama on Groq) generate malformed tool calls in XML
@@ -285,6 +286,42 @@ class LiteLLMProvider(LLMProvider):
             "failed_generation",
             "tool call validation failed",
         ))
+
+    @staticmethod
+    def _is_transient_provider_failure(exc: Exception) -> bool:
+        """Return True when the provider error looks transient/retryable."""
+        err = str(exc).lower()
+        return any(s in err for s in (
+            "internal server error",
+            '"code":500',
+            "status code 500",
+            "service unavailable",
+            "gateway timeout",
+            "bad gateway",
+            "timed out",
+            "timeout",
+            "temporarily unavailable",
+            "connection reset",
+        ))
+
+    async def _acompletion_with_retries(
+        self,
+        kwargs: dict[str, Any],
+        retries: int = 2,
+    ) -> Any:
+        """Call LiteLLM with short retries for transient provider failures."""
+        last_error: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                return await acompletion(**kwargs)
+            except Exception as exc:
+                last_error = exc
+                if attempt >= retries or not self._is_transient_provider_failure(exc):
+                    raise
+                await asyncio.sleep(0.75 * (2 ** attempt))
+        if last_error:
+            raise last_error
+        raise RuntimeError("acompletion failed without an exception")
 
     @staticmethod
     def _prefer_text_tool_calls(model: str, original_model: str) -> bool:
@@ -382,7 +419,7 @@ class LiteLLMProvider(LLMProvider):
         messages.insert(insert_at, {"role": "system", "content": tool_instruction})
         retry_kwargs["messages"] = self._sanitize_messages(messages)
 
-        response = await acompletion(**retry_kwargs)
+        response = await self._acompletion_with_retries(retry_kwargs)
         result = self._parse_response(response)
 
         # Try to extract tool calls from the plain-text response
