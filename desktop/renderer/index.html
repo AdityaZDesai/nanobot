@@ -18,6 +18,7 @@
 
       <main class="character-area">
         <canvas id="live2d-canvas"></canvas>
+        <canvas id="three-canvas" style="display:none"></canvas>
       </main>
 
       <section class="chat-panel" id="chat-panel">
@@ -32,17 +33,25 @@
         </div>
         <div class="settings-row">
           <label>Avatar <select id="model-select">
-            <option value="hiyori">Hiyori (HD)</option>
-            <option value="koharu">Koharu</option>
-            <option value="shizuku">Shizuku</option>
-            <option value="miku">Miku</option>
-            <option value="hijiki">Hijiki</option>
-            <option value="tororo">Tororo</option>
-            <option value="haruto">Haruto</option>
-            <option value="wanko">Wanko</option>
-            <option value="z16">Z16</option>
-            <option value="ni-j">Ni-J</option>
-            <option value="epsilon2_1">Epsilon</option>
+            <optgroup label="2D Avatars">
+              <option value="hiyori">Hiyori (HD)</option>
+              <option value="koharu">Koharu</option>
+              <option value="shizuku">Shizuku</option>
+              <option value="miku">Miku</option>
+              <option value="hijiki">Hijiki</option>
+              <option value="tororo">Tororo</option>
+              <option value="haruto">Haruto</option>
+              <option value="wanko">Wanko</option>
+              <option value="z16">Z16</option>
+              <option value="ni-j">Ni-J</option>
+              <option value="epsilon2_1">Epsilon</option>
+            </optgroup>
+            <optgroup id="3d-optgroup" label="3D Avatars">
+            </optgroup>
+          </select></label>
+          <label>LLM <select id="llm-profile">
+            <option value="standard">Standard (Groq)</option>
+            <option value="openrouter-paid">OpenRouter Paid (GPT-4o mini)</option>
           </select></label>
           <label>Size <input id="avatar-size" type="range" min="30" max="200" value="90" /></label>
           <label>Opacity <input id="opacity" type="range" min="25" max="100" value="100" /></label>

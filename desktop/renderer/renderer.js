@@ -80,6 +80,7 @@ const proactiveQuietEndEl = document.getElementById("proactive-quiet-end");
 const canvas = document.getElementById("live2d-canvas");
 const threeCanvas = document.getElementById("three-canvas");
 const modelSelectEl = document.getElementById("model-select");
+const llmProfileEl = document.getElementById("llm-profile");
 const avatarSizeEl = document.getElementById("avatar-size");
 
 let avatarMode = "live2d"; // "live2d" or "three"
@@ -979,6 +980,28 @@ bindProactiveConfigInput(proactiveChanceEl, "randomChancePercent");
 bindProactiveConfigInput(proactiveQuietStartEl, "quietStartHour");
 bindProactiveConfigInput(proactiveQuietEndEl, "quietEndHour");
 
+function updateLlmProfileStatus(status) {
+  if (!llmProfileEl || !status) return;
+  const profile = String(status.profile || "standard");
+  if (Array.from(llmProfileEl.options).some((opt) => opt.value === profile)) {
+    llmProfileEl.value = profile;
+  }
+}
+
+if (llmProfileEl) {
+  llmProfileEl.addEventListener("change", () => {
+    const profile = llmProfileEl.value;
+    ipcRenderer.invoke("overlay:set-llm-profile", profile)
+      .then((status) => {
+        updateLlmProfileStatus(status);
+        addSystemMessage(`LLM profile set to ${status.model || profile}. Backend restarting...`);
+      })
+      .catch((err) => {
+        addMessage("bot", `[llm] ${String(err.message || err)}`);
+      });
+  });
+}
+
 function updateVisionStatus(status) {
   if (!status) {
     visionStatusEl.textContent = "Unknown";
@@ -1064,6 +1087,14 @@ ipcRenderer.invoke("overlay:get-proactive-status")
   .catch(() => {
     updateProactiveStatus(null);
   });
+
+if (llmProfileEl) {
+  ipcRenderer.invoke("overlay:get-llm-profile")
+    .then((status) => {
+      updateLlmProfileStatus(status);
+    })
+    .catch(() => {});
+}
 
 // --- Avatar-only / chat toggle ---
 const overlayRoot = document.getElementById("overlay-root");

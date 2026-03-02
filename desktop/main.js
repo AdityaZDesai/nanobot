@@ -2,11 +2,79 @@ require("dotenv").config();
 const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, nativeImage, desktopCapturer, screen, systemPreferences, session } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const ELEVENLABS_DEFAULT_VOICE_ID = "lhTvHflPVOqgSWyuWQry";
 const ELEVENLABS_DEFAULT_MODEL_ID = "eleven_v3";
 const ELEVENLABS_FALLBACK_MODEL_ID = "eleven_multilingual_v2";
+
+const LLM_PROFILE_PRESETS = {
+  standard: {
+    provider: "auto",
+    model: "groq/llama-3.3-70b-versatile",
+  },
+  "openrouter-paid": {
+    provider: "openrouter",
+    model: "openai/gpt-4o-mini",
+  },
+};
+
+function getNanobotConfigPath() {
+  return path.join(os.homedir(), ".nanobot", "config.json");
+}
+
+function readNanobotConfig() {
+  const configPath = getNanobotConfigPath();
+  const raw = fs.readFileSync(configPath, "utf8");
+  return JSON.parse(raw);
+}
+
+function writeNanobotConfig(config) {
+  const configPath = getNanobotConfigPath();
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf8");
+}
+
+function inferLlmProfile(defaults = {}) {
+  if (
+    defaults.provider === LLM_PROFILE_PRESETS["openrouter-paid"].provider
+    && defaults.model === LLM_PROFILE_PRESETS["openrouter-paid"].model
+  ) {
+    return "openrouter-paid";
+  }
+  return "standard";
+}
+
+function getLlmProfileStatus() {
+  const config = readNanobotConfig();
+  const defaults = (config.agents && config.agents.defaults) || {};
+  return {
+    profile: inferLlmProfile(defaults),
+    provider: String(defaults.provider || "auto"),
+    model: String(defaults.model || ""),
+  };
+}
+
+function applyLlmProfile(profileKey) {
+  const preset = LLM_PROFILE_PRESETS[profileKey];
+  if (!preset) {
+    throw new Error(`Unknown LLM profile: ${profileKey}`);
+  }
+
+  const config = readNanobotConfig();
+  if (!config.agents) config.agents = {};
+  if (!config.agents.defaults) config.agents.defaults = {};
+
+  config.agents.defaults.provider = preset.provider;
+  config.agents.defaults.model = preset.model;
+  writeNanobotConfig(config);
+
+  return {
+    profile: profileKey,
+    provider: preset.provider,
+    model: preset.model,
+  };
+}
 
 function parseElevenLabsError(rawBody) {
   try {
@@ -841,6 +909,17 @@ ipcMain.handle("overlay:send", async (_event, requestPayload) => {
 
 ipcMain.handle("overlay:get-proactive-status", () => {
   return proactiveCompanion.getStatus();
+});
+
+ipcMain.handle("overlay:get-llm-profile", () => {
+  return getLlmProfileStatus();
+});
+
+ipcMain.handle("overlay:set-llm-profile", (_event, profileKey) => {
+  const key = String(profileKey || "").trim();
+  const applied = applyLlmProfile(key);
+  backend.stop();
+  return { ...applied, restarting: true };
 });
 
 ipcMain.on("renderer-error", (_event, errorStr) => {
