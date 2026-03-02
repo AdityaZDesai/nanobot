@@ -1,6 +1,7 @@
 const { ipcRenderer } = require("electron");
 const PIXI = require("pixi.js");
 const path = require("path");
+const fs = require("fs");
 const { pathToFileURL } = require("url");
 
 // Catch renderer-process errors that would otherwise silently crash
@@ -40,9 +41,20 @@ const MODEL_MAP = {
   z16:         { type: "live2d", pkg: "live2d-widget-model-z16/assets/z16.model.json" },
   "ni-j":      { type: "live2d", pkg: "live2d-widget-model-ni-j/assets/ni-j.model.json" },
   epsilon2_1:  { type: "live2d", pkg: "live2d-widget-model-epsilon2_1/assets/Epsilon2.1.model.json" },
-  // --- Three.js 3D (glb) ---
-  "3d-default": { type: "three", local: path.join(__dirname, "models", "3d", "default.glb") },
 };
+
+// Auto-scan models/3d/ for .glb files and add them to MODEL_MAP
+const THREE_D_DIR = path.join(__dirname, "models", "3d");
+try {
+  const files = fs.readdirSync(THREE_D_DIR).filter((f) => f.endsWith(".glb") || f.endsWith(".gltf"));
+  for (const file of files) {
+    const name = path.basename(file, path.extname(file));
+    const key = "3d-" + name;
+    MODEL_MAP[key] = { type: "three", local: path.join(THREE_D_DIR, file), label: name.replace(/[_-]/g, " ") };
+  }
+} catch (_) {
+  // models/3d/ doesn't exist yet — skip
+}
 
 let currentModelKey = "hiyori";
 
@@ -89,6 +101,8 @@ const WAKE_WORD_PREFIX = /^(?:hey\s+)?babe\b[\s,:;.!?-]*/i;
 let audioContext = null;
 let analyser = null;
 let isSpeaking = false;
+let lipSyncTimeData = null;
+let lipSyncLevel = 0;
 
 // --- Idle animation state ---
 let nextBlinkTime = 0;
@@ -153,6 +167,7 @@ function addSystemMessage(text) {
 
 function stopSpeechPlayback() {
   isSpeaking = false;
+  lipSyncLevel = 0;
   if (currentAudio) {
     currentAudio.pause();
     currentAudio = null;
@@ -173,26 +188,39 @@ function startLipSync(audioEl) {
   }
   const source = audioContext.createMediaElementSource(audioEl);
   analyser = audioContext.createAnalyser();
-  analyser.fftSize = 256;
+  analyser.fftSize = 1024;
+  analyser.smoothingTimeConstant = 0.6;
+  lipSyncTimeData = new Uint8Array(analyser.fftSize);
   source.connect(analyser);
   analyser.connect(audioContext.destination);
+  lipSyncLevel = 0;
   isSpeaking = true;
 }
 
 function getLipSyncValue() {
   if (!analyser || !isSpeaking) return 0;
-  const data = new Uint8Array(analyser.frequencyBinCount);
-  analyser.getByteFrequencyData(data);
-  // Focus on voice frequency range (roughly bins 2-20 for speech fundamentals)
-  let sum = 0;
-  const start = 2;
-  const end = Math.min(20, data.length);
-  for (let i = start; i < end; i++) {
-    sum += data[i];
+  if (!lipSyncTimeData || lipSyncTimeData.length !== analyser.fftSize) {
+    lipSyncTimeData = new Uint8Array(analyser.fftSize);
   }
-  const avg = sum / (end - start);
-  // Normalize to 0-1 with some amplification
-  return Math.min(1, avg / 128);
+  analyser.getByteTimeDomainData(lipSyncTimeData);
+
+  let sumSquares = 0;
+  for (let i = 0; i < lipSyncTimeData.length; i++) {
+    const centered = (lipSyncTimeData[i] - 128) / 128;
+    sumSquares += centered * centered;
+  }
+
+  const rms = Math.sqrt(sumSquares / lipSyncTimeData.length);
+  const noiseFloor = 0.015;
+  const gain = 6.0;
+  const target = Math.max(0, Math.min(1, (rms - noiseFloor) * gain));
+
+  const attack = 0.45;
+  const release = 0.16;
+  const lerp = target > lipSyncLevel ? attack : release;
+  lipSyncLevel += (target - lipSyncLevel) * lerp;
+
+  return lipSyncLevel;
 }
 
 async function speak(text) {
@@ -994,5 +1022,19 @@ function toggleChat() {
 ipcRenderer.on("overlay:toggle-chat", () => {
   toggleChat();
 });
+
+// Populate 3D avatar dropdown from auto-scanned MODEL_MAP entries
+const optgroup3d = document.getElementById("3d-optgroup");
+if (optgroup3d) {
+  for (const [key, entry] of Object.entries(MODEL_MAP)) {
+    if (entry.type !== "three") continue;
+    const opt = document.createElement("option");
+    opt.value = key;
+    const label = (entry.label || key.replace("3d-", ""))
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+    opt.textContent = label;
+    optgroup3d.appendChild(opt);
+  }
+}
 
 loadLive2D();
