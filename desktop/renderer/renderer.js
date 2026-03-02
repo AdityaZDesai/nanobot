@@ -103,6 +103,46 @@ let analyser = null;
 let isSpeaking = false;
 let lipSyncTimeData = null;
 let lipSyncLevel = 0;
+let lipSyncEnvelope = null;
+let lipSyncEnvelopeStep = 0;
+
+function buildLipSyncEnvelope(decodedAudioBuffer) {
+  const sampleRate = decodedAudioBuffer.sampleRate;
+  const bucketRate = 45;
+  const bucketSize = Math.max(256, Math.floor(sampleRate / bucketRate));
+  const frameCount = decodedAudioBuffer.length;
+  const channelCount = decodedAudioBuffer.numberOfChannels;
+  const buckets = Math.ceil(frameCount / bucketSize);
+  const envelope = new Float32Array(buckets);
+
+  for (let b = 0; b < buckets; b += 1) {
+    const start = b * bucketSize;
+    const end = Math.min(frameCount, start + bucketSize);
+    let sumSq = 0;
+    let count = 0;
+    for (let ch = 0; ch < channelCount; ch += 1) {
+      const data = decodedAudioBuffer.getChannelData(ch);
+      for (let i = start; i < end; i += 1) {
+        const s = data[i];
+        sumSq += s * s;
+      }
+      count += end - start;
+    }
+    const rms = count > 0 ? Math.sqrt(sumSq / count) : 0;
+    const noiseFloor = 0.01;
+    const gain = 7.5;
+    envelope[b] = Math.max(0, Math.min(1, (rms - noiseFloor) * gain));
+  }
+
+  for (let i = 1; i < envelope.length; i += 1) {
+    envelope[i] = envelope[i - 1] * 0.25 + envelope[i] * 0.75;
+  }
+
+  return {
+    envelope,
+    stepSeconds: bucketSize / sampleRate,
+  };
+}
 
 // --- Idle animation state ---
 let nextBlinkTime = 0;
@@ -168,6 +208,8 @@ function addSystemMessage(text) {
 function stopSpeechPlayback() {
   isSpeaking = false;
   lipSyncLevel = 0;
+  lipSyncEnvelope = null;
+  lipSyncEnvelopeStep = 0;
   if (currentAudio) {
     currentAudio.pause();
     currentAudio = null;
@@ -198,22 +240,37 @@ function startLipSync(audioEl) {
 }
 
 function getLipSyncValue() {
-  if (!analyser || !isSpeaking) return 0;
-  if (!lipSyncTimeData || lipSyncTimeData.length !== analyser.fftSize) {
-    lipSyncTimeData = new Uint8Array(analyser.fftSize);
-  }
-  analyser.getByteTimeDomainData(lipSyncTimeData);
+  if (!isSpeaking) return 0;
 
-  let sumSquares = 0;
-  for (let i = 0; i < lipSyncTimeData.length; i++) {
-    const centered = (lipSyncTimeData[i] - 128) / 128;
-    sumSquares += centered * centered;
+  let envelopeTarget = 0;
+  if (currentAudio && lipSyncEnvelope && lipSyncEnvelopeStep > 0) {
+    const idx = Math.min(
+      lipSyncEnvelope.length - 1,
+      Math.max(0, Math.floor(currentAudio.currentTime / lipSyncEnvelopeStep))
+    );
+    envelopeTarget = lipSyncEnvelope[idx] || 0;
   }
 
-  const rms = Math.sqrt(sumSquares / lipSyncTimeData.length);
-  const noiseFloor = 0.015;
-  const gain = 6.0;
-  const target = Math.max(0, Math.min(1, (rms - noiseFloor) * gain));
+  let analyserTarget = 0;
+  if (analyser) {
+    if (!lipSyncTimeData || lipSyncTimeData.length !== analyser.fftSize) {
+      lipSyncTimeData = new Uint8Array(analyser.fftSize);
+    }
+    analyser.getByteTimeDomainData(lipSyncTimeData);
+
+    let sumSquares = 0;
+    for (let i = 0; i < lipSyncTimeData.length; i++) {
+      const centered = (lipSyncTimeData[i] - 128) / 128;
+      sumSquares += centered * centered;
+    }
+
+    const rms = Math.sqrt(sumSquares / lipSyncTimeData.length);
+    const noiseFloor = 0.015;
+    const gain = 6.0;
+    analyserTarget = Math.max(0, Math.min(1, (rms - noiseFloor) * gain));
+  }
+
+  const target = Math.max(analyserTarget, envelopeTarget);
 
   const attack = 0.45;
   const release = 0.16;
@@ -244,6 +301,22 @@ async function speak(text) {
 
   currentAudioUrl = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
   currentAudio = new Audio(currentAudioUrl);
+  if (!audioContext) {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioContext.state === "suspended") {
+    await audioContext.resume();
+  }
+  try {
+    const decoded = await audioContext.decodeAudioData(bytes.buffer.slice(0));
+    const built = buildLipSyncEnvelope(decoded);
+    lipSyncEnvelope = built.envelope;
+    lipSyncEnvelopeStep = built.stepSeconds;
+  } catch (decodeErr) {
+    console.warn("[lip-sync] decodeAudioData failed, falling back to analyser-only", decodeErr);
+    lipSyncEnvelope = null;
+    lipSyncEnvelopeStep = 0;
+  }
   currentAudio.onended = () => {
     stopSpeechPlayback();
   };

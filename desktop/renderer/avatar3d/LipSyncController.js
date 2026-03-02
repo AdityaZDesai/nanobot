@@ -110,7 +110,7 @@ class LipSyncController {
 
     // Jaw bone: rotate open
     if (this._jawBone && this._jawBaseRotation != null) {
-      const maxJawRotation = 0.4; // radians — much larger for visibility
+      const maxJawRotation = 0.65; // radians — stronger movement for non-morph rigs
       const targetRotation = this._jawBaseRotation + amplitude * maxJawRotation;
       this._jawBone.rotation.x += (targetRotation - this._jawBone.rotation.x) * 0.4;
     }
@@ -118,7 +118,7 @@ class LipSyncController {
     // Lower lip center: pull down strongly with mouth open
     if (this._lipLowerCenter && this._lipLowerCenterRest) {
       const rest = this._lipLowerCenterRest;
-      const offset = amplitude * 0.2;
+      const offset = amplitude * 0.28;
       this._lipLowerCenter.rotation.x += (rest.x + offset - this._lipLowerCenter.rotation.x) * 0.4;
     }
 

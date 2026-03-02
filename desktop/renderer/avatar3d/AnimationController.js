@@ -17,6 +17,12 @@ class AnimationController {
     this._spine1Bone = null;
     this._spine2Bone = null;
     this._jawBone = null;
+    this._shoulderL = null;
+    this._shoulderR = null;
+    this._upperArmL = null;
+    this._upperArmR = null;
+    this._forearmL = null;
+    this._forearmR = null;
 
     // Facial bones (bone-based rigs without morph targets)
     this._eyeBoneL = null;
@@ -120,6 +126,24 @@ class AnimationController {
       if (lower === "bip001-spine2" || lower === "spine2" || lower === "mixamorigspine2") {
         this._spine2Bone = bone;
       }
+      if (!this._shoulderL && (lower === "shoulderl" || lower.includes("shoulder_l") || lower.includes("leftshoulder"))) {
+        this._shoulderL = bone;
+      }
+      if (!this._shoulderR && (lower === "shoulderr" || lower.includes("shoulder_r") || lower.includes("rightshoulder"))) {
+        this._shoulderR = bone;
+      }
+      if (!this._upperArmL && (lower === "upper_arml" || lower.includes("upperarm_l") || lower.includes("leftarm"))) {
+        this._upperArmL = bone;
+      }
+      if (!this._upperArmR && (lower === "upper_armr" || lower.includes("upperarm_r") || lower.includes("rightarm"))) {
+        this._upperArmR = bone;
+      }
+      if (!this._forearmL && (lower === "forearml" || lower.includes("forearm_l") || lower.includes("leftforearm"))) {
+        this._forearmL = bone;
+      }
+      if (!this._forearmR && (lower === "forearmr" || lower.includes("forearm_r") || lower.includes("rightforearm"))) {
+        this._forearmR = bone;
+      }
 
       // --- Eye bones ---
       if (name === "b_L_Eye_0") this._eyeBoneL = bone;
@@ -182,6 +206,12 @@ class AnimationController {
     if (this._spineBone) bonesToCapture.push(this._spineBone);
     if (this._spine1Bone) bonesToCapture.push(this._spine1Bone);
     if (this._spine2Bone) bonesToCapture.push(this._spine2Bone);
+    if (this._shoulderL) bonesToCapture.push(this._shoulderL);
+    if (this._shoulderR) bonesToCapture.push(this._shoulderR);
+    if (this._upperArmL) bonesToCapture.push(this._upperArmL);
+    if (this._upperArmR) bonesToCapture.push(this._upperArmR);
+    if (this._forearmL) bonesToCapture.push(this._forearmL);
+    if (this._forearmR) bonesToCapture.push(this._forearmR);
 
     for (const bone of bonesToCapture) {
       this._restPoses.set(bone, {
@@ -260,6 +290,7 @@ class AnimationController {
     this._updateBreathing(t);
     this._updateBodySway(t);
     this._updateHeadDrift(t);
+    this._updateArmsDown(delta);
     this._updateSaccades();
     this._updateEyeBones();
     this._updateBlink();
@@ -327,6 +358,47 @@ class AnimationController {
         const nTargetY = neckRest.y + 0.005 * Math.sin(t * 0.42);
         this._neckBone.rotation.x += (nTargetX - this._neckBone.rotation.x) * smooth;
         this._neckBone.rotation.y += (nTargetY - this._neckBone.rotation.y) * smooth;
+      }
+    }
+  }
+
+  _updateArmsDown(delta) {
+    const armLerp = (1 - Math.pow(0.9, delta * 60)) * 0.45;
+
+    if (this._upperArmL) {
+      const rest = this._restPoses.get(this._upperArmL);
+      if (rest) {
+        const targetX = rest.x + 0.08;
+        const targetY = rest.y + 0.04;
+        const targetZ = rest.z + 0.35;
+        this._upperArmL.rotation.x += (targetX - this._upperArmL.rotation.x) * armLerp;
+        this._upperArmL.rotation.y += (targetY - this._upperArmL.rotation.y) * armLerp;
+        this._upperArmL.rotation.z += (targetZ - this._upperArmL.rotation.z) * armLerp;
+      }
+    }
+
+    if (this._upperArmR) {
+      const rest = this._restPoses.get(this._upperArmR);
+      if (rest) {
+        const targetX = rest.x + 0.08;
+        const targetY = rest.y - 0.04;
+        const targetZ = rest.z - 0.35;
+        this._upperArmR.rotation.x += (targetX - this._upperArmR.rotation.x) * armLerp;
+        this._upperArmR.rotation.y += (targetY - this._upperArmR.rotation.y) * armLerp;
+        this._upperArmR.rotation.z += (targetZ - this._upperArmR.rotation.z) * armLerp;
+      }
+    }
+
+    if (this._forearmL) {
+      const rest = this._restPoses.get(this._forearmL);
+      if (rest) {
+        this._forearmL.rotation.x += (rest.x + 0.04 - this._forearmL.rotation.x) * armLerp * 0.7;
+      }
+    }
+    if (this._forearmR) {
+      const rest = this._restPoses.get(this._forearmR);
+      if (rest) {
+        this._forearmR.rotation.x += (rest.x + 0.04 - this._forearmR.rotation.x) * armLerp * 0.7;
       }
     }
   }
@@ -474,6 +546,12 @@ class AnimationController {
     this._spine1Bone = null;
     this._spine2Bone = null;
     this._jawBone = null;
+    this._shoulderL = null;
+    this._shoulderR = null;
+    this._upperArmL = null;
+    this._upperArmR = null;
+    this._forearmL = null;
+    this._forearmR = null;
     this._neckBone = null;
     this._eyeBoneL = null;
     this._eyeBoneR = null;
