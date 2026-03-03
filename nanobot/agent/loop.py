@@ -257,6 +257,33 @@ class AgentLoop:
 
         return ", ".join(_fmt(tc) for tc in tool_calls)
 
+    _STALE_REFUSAL_PATTERNS = (
+        re.compile(r"\bunable to take control\b", re.IGNORECASE),
+        re.compile(r"\bcan(?:not|'t)\s+take control\b", re.IGNORECASE),
+        re.compile(r"\bperform actions directly\b", re.IGNORECASE),
+        re.compile(r"\bguide you through (?:the )?steps\b", re.IGNORECASE),
+    )
+
+    @classmethod
+    def _sanitize_history(cls, history: list[dict]) -> list[dict]:
+        """Remove stale refusal messages from assistant history to avoid reinforcement loops."""
+        kept: list[dict] = []
+        dropped = 0
+        for message in history:
+            if message.get("role") != "assistant":
+                kept.append(message)
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and any(
+                pattern.search(content) for pattern in cls._STALE_REFUSAL_PATTERNS
+            ):
+                dropped += 1
+                continue
+            kept.append(message)
+        if dropped:
+            logger.debug("Dropped {} stale refusal message(s) from history", dropped)
+        return kept
+
     async def _run_agent_loop(
         self,
         initial_messages: list[dict],
@@ -446,7 +473,7 @@ class AgentLoop:
             key = f"{channel}:{chat_id}"
             session = self.sessions.get_or_create(key)
             self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
-            history = session.get_history(max_messages=self.memory_window)
+            history = self._sanitize_history(session.get_history(max_messages=self.memory_window))
             messages = self.context.build_messages(
                 history=history,
                 current_message=msg.content,
@@ -538,7 +565,7 @@ class AgentLoop:
             if captured:
                 logger.debug("Captured {} user fact(s) for memory", captured)
 
-        history = session.get_history(max_messages=self.memory_window)
+        history = self._sanitize_history(session.get_history(max_messages=self.memory_window))
         initial_messages = self.context.build_messages(
             history=history,
             current_message=msg.content,
