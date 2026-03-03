@@ -188,7 +188,7 @@ class TestModelRouting:
         assert loop.provider.chat.await_args.kwargs["model"] is None
 
     @pytest.mark.asyncio
-    async def test_desktop_action_prefers_hard_model(self):
+    async def test_desktop_action_still_uses_provider_routing(self):
         from nanobot.providers.base import LLMResponse
 
         loop, _ = _make_loop()
@@ -201,7 +201,6 @@ class TestModelRouting:
                 {"role": "system", "content": "s"},
                 {"role": "user", "content": "control my computer"},
             ],
-            current_user_text="Please control my computer and open chrome",
         )
 
-        assert loop.provider.chat.await_args.kwargs["model"] == "google/gemini-2.5-flash"
+        assert loop.provider.chat.await_args.kwargs["model"] is None
