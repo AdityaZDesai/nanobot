@@ -165,3 +165,43 @@ class TestSubagentCancellation:
         provider.get_default_model.return_value = "test-model"
         mgr = SubagentManager(provider=provider, workspace=MagicMock(), bus=bus)
         assert await mgr.cancel_by_session("nonexistent") == 0
+
+
+class TestModelRouting:
+    @pytest.mark.asyncio
+    async def test_model_tier_routing_passes_none_model(self):
+        from nanobot.providers.base import LLMResponse
+
+        loop, _ = _make_loop()
+        loop.provider.model_tiers = {"easy": "a", "medium": "b", "hard": "c"}
+        loop.provider.chat = AsyncMock(return_value=LLMResponse(content="ok"))
+        loop.tools.get_definitions = MagicMock(return_value=[])
+
+        await loop._run_agent_loop(
+            [
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "hello"},
+            ],
+            current_user_text="hello",
+        )
+
+        assert loop.provider.chat.await_args.kwargs["model"] is None
+
+    @pytest.mark.asyncio
+    async def test_desktop_action_prefers_hard_model(self):
+        from nanobot.providers.base import LLMResponse
+
+        loop, _ = _make_loop()
+        loop.provider.model_tiers = {"hard": "google/gemini-2.5-flash"}
+        loop.provider.chat = AsyncMock(return_value=LLMResponse(content="ok"))
+        loop.tools.get_definitions = MagicMock(return_value=[])
+
+        await loop._run_agent_loop(
+            [
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "control my computer"},
+            ],
+            current_user_text="Please control my computer and open chrome",
+        )
+
+        assert loop.provider.chat.await_args.kwargs["model"] == "google/gemini-2.5-flash"

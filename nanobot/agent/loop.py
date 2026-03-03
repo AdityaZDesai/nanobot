@@ -73,6 +73,7 @@ class AgentLoop:
         self.provider = provider
         self.workspace = workspace
         self.model = model or provider.get_default_model()
+        self._use_provider_model_routing = bool(getattr(provider, "model_tiers", None))
         self.max_iterations = max_iterations
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -218,6 +219,19 @@ class AgentLoop:
         )
         return any(marker in query for marker in visual_markers)
 
+    @staticmethod
+    def _is_desktop_action_request(user_text: str) -> bool:
+        query = (user_text or "").lower()
+        markers = (
+            "control my computer",
+            "control my pc",
+            "on my computer",
+            "on my desktop",
+            "on my laptop",
+            "use my computer",
+        )
+        return any(marker in query for marker in markers)
+
     def _format_girlfriend_reply(self, text: str | None, user_text: str) -> str | None:
         if not self.girlfriend_mode or not text:
             return text
@@ -288,6 +302,7 @@ class AgentLoop:
         self,
         initial_messages: list[dict],
         on_progress: Callable[..., Awaitable[None]] | None = None,
+        current_user_text: str | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop. Returns (final_content, tools_used, messages)."""
         messages = initial_messages
@@ -295,13 +310,21 @@ class AgentLoop:
         final_content = None
         tools_used: list[str] = []
 
+        model_for_turn: str | None = self.model
+        if self._use_provider_model_routing:
+            model_for_turn = None
+            if self._is_desktop_action_request(current_user_text or ""):
+                hard_model = getattr(self.provider, "model_tiers", {}).get("hard")
+                if hard_model:
+                    model_for_turn = hard_model
+
         while iteration < self.max_iterations:
             iteration += 1
 
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
-                model=self.model,
+                model=model_for_turn,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
@@ -480,7 +503,10 @@ class AgentLoop:
                 channel=channel,
                 chat_id=chat_id,
             )
-            final_content, _, all_msgs = await self._run_agent_loop(messages)
+            final_content, _, all_msgs = await self._run_agent_loop(
+                messages,
+                current_user_text=msg.content,
+            )
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
             return OutboundMessage(
@@ -590,6 +616,7 @@ class AgentLoop:
         final_content, _, all_msgs = await self._run_agent_loop(
             initial_messages,
             on_progress=on_progress or _bus_progress,
+            current_user_text=msg.content,
         )
 
         if final_content is None:
