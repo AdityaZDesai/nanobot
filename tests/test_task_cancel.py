@@ -234,3 +234,22 @@ class TestModelRouting:
         assert loop.provider.chat.await_count == 2
         assert loop.provider.chat.await_args_list[0].kwargs["model"] is None
         assert loop.provider.chat.await_args_list[1].kwargs["model"] == loop.model
+
+    def test_classifier_ignores_old_turn_tool_calls(self):
+        from nanobot.providers.litellm_provider import LiteLLMProvider
+
+        provider = LiteLLMProvider(default_model="groq/llama-3.3-70b-versatile")
+        messages = [
+            {"role": "system", "content": "s"},
+            {"role": "user", "content": "old request"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
+            {"role": "tool", "content": "ok"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "2"}]},
+            {"role": "tool", "content": "ok"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "3"}]},
+            {"role": "tool", "content": "ok"},
+            {"role": "user", "content": "Open chrome on my desktop"},
+        ]
+
+        tier = provider._classify_difficulty(messages)
+        assert tier == "medium"

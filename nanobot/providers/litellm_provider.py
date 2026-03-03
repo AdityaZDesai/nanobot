@@ -30,16 +30,20 @@ class LiteLLMProvider(LLMProvider):
     """
     
     def __init__(
-        self, 
-        api_key: str | None = None, 
+        self,
+        api_key: str | None = None,
         api_base: str | None = None,
         default_model: str = "anthropic/claude-opus-4-5",
         extra_headers: dict[str, str] | None = None,
         provider_name: str | None = None,
+        fallback_models: list[str] | None = None,
+        model_tiers: dict[str, str] | None = None,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
+        self.fallback_models = fallback_models or []
+        self.model_tiers = model_tiers or {}  # {"easy": "...", "medium": "...", "hard": "...", "expert": "..."}
         
         # Detect gateway / local deployment.
         # provider_name (from config key) is the primary signal;
@@ -186,6 +190,155 @@ class LiteLLMProvider(LLMProvider):
         vision_keywords = ("vision", "gpt-4o", "gpt-4-turbo", "claude", "gemini", "pixtral")
         return any(kw in lower for kw in vision_keywords)
 
+    # ── Difficulty classification ──────────────────────────────────────
+
+    # Keywords that signal complexity — each maps to the points it adds.
+    _HARD_KEYWORDS: list[tuple[str, int]] = [
+        # Expert-level (3 pts)
+        ("refactor", 3), ("architect", 3), ("redesign", 3), ("migrate", 3),
+        ("security vulnerability", 3), ("race condition", 3), ("concurrency", 3),
+        ("microservice", 3), ("infrastructure", 3), ("distributed", 3),
+        # Hard (2 pts)
+        ("implement", 2), ("debug", 2), ("optimize", 2), ("fix the bug", 2),
+        ("stack trace", 2), ("traceback", 2), ("error:", 2), ("exception", 2),
+        ("multi-step", 2), ("step by step", 2), ("algorithm", 2),
+        ("integrate", 2), ("authentication", 2), ("database", 2),
+        ("deploy", 2), ("pipeline", 2), ("performance", 2),
+        # Medium (1 pt)
+        ("explain", 1), ("how does", 1), ("write a", 1), ("create a", 1),
+        ("update", 1), ("change", 1), ("modify", 1), ("add a", 1),
+        ("search for", 1), ("find", 1), ("look up", 1), ("open", 1),
+    ]
+
+    _EASY_SIGNALS: list[str] = [
+        "hi", "hello", "hey", "thanks", "thank you", "ok", "okay", "sure",
+        "yes", "no", "good", "great", "bye", "gn", "gm", "lol", "haha",
+        "what time", "how are you", "what's up", "love you",
+    ]
+    def _classify_difficulty(self, messages: list[dict[str, Any]]) -> str:
+        """
+        Classify the current turn's difficulty based on conversation context.
+
+        Returns one of: "easy", "medium", "hard", "expert".
+
+        The classifier uses a point-based system on the latest user message
+        plus conversation-level signals (tool-call depth, code blocks, etc.).
+        Thresholds:  easy = greeting/casual,  medium = 0-2,  hard = 3-7,
+        expert = 8+.
+        """
+        import re as _re
+
+        # Find the last user message
+        last_user = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    last_user = " ".join(
+                        item.get("text", "") for item in content
+                        if isinstance(item, dict)
+                    )
+                else:
+                    last_user = str(content)
+                break
+
+        lower = last_user.lower().strip()
+        words = set(_re.findall(r"[a-z']+", lower))
+
+        # Quick exit: very short casual messages → easy
+        # Use word-set intersection to avoid "no" matching "now", etc.
+        if len(lower) < 40:
+            easy_words = {"hi", "hello", "hey", "thanks", "ok", "okay", "sure",
+                          "yes", "no", "good", "great", "bye", "gn", "gm",
+                          "lol", "haha"}
+            easy_phrases = {"thank you", "how are you", "what's up",
+                            "love you", "what time"}
+            if words & easy_words or any(p in lower for p in easy_phrases):
+                return "easy"
+
+        score = 0
+
+        # ── Text complexity signals ──
+        if len(last_user) > 500:
+            score += 2
+        elif len(last_user) > 200:
+            score += 1
+
+        # Code blocks (strong signal of technical task)
+        score += min(last_user.count("```"), 3) * 2
+
+        # Multiple questions
+        question_count = last_user.count("?")
+        if question_count >= 3:
+            score += 2
+        elif question_count >= 2:
+            score += 1
+
+        # Numbered lists / multi-step instructions
+        numbered_steps = len(_re.findall(r"(?:^|\n)\s*\d+[.)]\s", last_user))
+        if numbered_steps >= 3:
+            score += 3
+        elif numbered_steps >= 2:
+            score += 1
+
+        # Bullet points
+        bullet_count = len(_re.findall(r"(?:^|\n)\s*[-*]\s", last_user))
+        if bullet_count >= 3:
+            score += 2
+
+        # Keyword scoring — simple additive, each keyword adds its full weight
+        for keyword, points in self._HARD_KEYWORDS:
+            if keyword in lower:
+                score += points
+        # ── Conversation context signals ──
+        last_user_idx = -1
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                last_user_idx = i
+                break
+        turn_slice = messages[last_user_idx + 1 :] if last_user_idx >= 0 else messages
+
+        tool_call_count = sum(
+            1 for m in turn_slice
+            if m.get("role") == "assistant" and m.get("tool_calls")
+        )
+
+        # Active tool-use chain → task is already complex
+        if tool_call_count >= 3:
+            score += 3
+        elif tool_call_count >= 1:
+            score += 1
+
+        # If we're mid-chain processing tool results, bump slightly
+        if turn_slice and turn_slice[-1].get("role") == "tool":
+            score += 1
+
+        # Map score to tier.
+        # easy is only reached via the greeting fast-path above.
+        # Everything else defaults to medium at minimum.
+        if score <= 2:
+            return "medium"
+        elif score <= 6:
+            return "hard"
+        else:
+            return "expert"
+
+    def _select_model_for_difficulty(self, messages: list[dict[str, Any]], explicit_model: str | None) -> str:
+        """Pick the right model based on difficulty when model_tiers is configured."""
+        # If caller explicitly passed a model, respect it
+        if explicit_model:
+            return explicit_model
+
+        # If no tiers configured, use default
+        if not self.model_tiers:
+            return self.default_model
+
+        difficulty = self._classify_difficulty(messages)
+        selected = self.model_tiers.get(difficulty) or self.default_model
+        return selected
+
+    # ── Main chat entry point ───────────────────────────────────────
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -196,51 +349,98 @@ class LiteLLMProvider(LLMProvider):
     ) -> LLMResponse:
         """
         Send a chat completion request via LiteLLM.
-        
-        Args:
-            messages: List of message dicts with 'role' and 'content'.
-            tools: Optional list of tool definitions in OpenAI format.
-            model: Model identifier (e.g., 'anthropic/claude-sonnet-4-5').
-            max_tokens: Maximum tokens in response.
-            temperature: Sampling temperature.
-        
-        Returns:
-            LLMResponse with content and/or tool calls.
+
+        When ``model_tiers`` are configured, the difficulty of the current turn
+        is classified and the appropriate model tier is selected automatically.
+        On provider-level failures the fallback chain is tried.
         """
-        original_model = model or self.default_model
+        primary = self._select_model_for_difficulty(messages, model)
+        models_to_try = [primary] + [m for m in self.fallback_models if m != primary]
+
+        last_error: Exception | None = None
+        for attempt_model in models_to_try:
+            try:
+                return await self._chat_single(
+                    messages=messages,
+                    tools=tools,
+                    model=attempt_model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+            except Exception as e:
+                last_error = e
+                if not self._is_fallback_worthy(e):
+                    return LLMResponse(
+                        content=f"Error calling LLM: {e}",
+                        finish_reason="error",
+                    )
+
+        return LLMResponse(
+            content=f"Error calling LLM (all models failed): {last_error}",
+            finish_reason="error",
+        )
+
+    @staticmethod
+    def _is_fallback_worthy(exc: Exception) -> bool:
+        """Return True when the error warrants trying the next fallback model."""
+        err = str(exc).lower()
+        return any(s in err for s in (
+            "rate limit",
+            "rate_limit",
+            "429",
+            "quota",
+            "internal server error",
+            "status code 500",
+            '"code":500',
+            "service unavailable",
+            "503",
+            "gateway timeout",
+            "bad gateway",
+            "timed out",
+            "timeout",
+            "temporarily unavailable",
+            "connection reset",
+            "overloaded",
+            "capacity",
+        ))
+
+    async def _chat_single(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str,
+        max_tokens: int,
+        temperature: float,
+    ) -> LLMResponse:
+        """Attempt a single model. Raises on provider-level failures."""
+        original_model = model
         model = self._resolve_model(original_model)
 
         if self._supports_cache_control(original_model):
             messages, tools = self._apply_cache_control(messages, tools)
 
-        # Clamp max_tokens to at least 1 — negative or zero values cause
-        # LiteLLM to reject the request with "max_tokens must be at least 1".
         max_tokens = max(1, max_tokens)
-        
+
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": self._sanitize_messages(self._sanitize_empty_content(messages)),
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
-        
-        # Apply model-specific overrides (e.g. kimi-k2.5 temperature)
+
         self._apply_model_overrides(model, kwargs)
-        
-        # Pass api_key directly — more reliable than env vars alone
+
         if self.api_key:
             kwargs["api_key"] = self.api_key
-        
-        # Pass api_base for custom endpoints
         if self.api_base:
             kwargs["api_base"] = self.api_base
-        
-        # Pass extra headers (e.g. APP-Code for AiHubMix)
         if self.extra_headers:
             kwargs["extra_headers"] = self.extra_headers
 
+        # For fallback models on a different provider, resolve their API key.
+        self._inject_fallback_credentials(original_model, kwargs)
+
         # Groq models frequently emit invalid native function-call payloads.
-        # Prefer text-based tool calls up front for higher reliability.
         if tools and self._prefer_text_tool_calls(model, original_model):
             try:
                 return await self._retry_with_text_tools(kwargs, tools)
@@ -250,32 +450,39 @@ class LiteLLMProvider(LLMProvider):
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
-        
+
         try:
             response = await self._acompletion_with_retries(kwargs)
             return self._parse_response(response)
         except Exception as e:
-            # Some models (Llama on Groq) generate malformed tool calls in XML
-            # format like <function=exec{"command":"..."}></function> which the
-            # provider rejects.  Try to salvage the tool call from the error.
             salvaged = self._try_salvage_tool_call(e)
             if salvaged:
                 return salvaged
 
-            # If native tool calling failed, retry with text-based tool
-            # descriptions so the model outputs JSON we can parse instead.
             if tools and self._is_tool_call_failure(e):
                 try:
                     return await self._retry_with_text_tools(kwargs, tools)
                 except Exception:
-                    pass  # Fall through to error return
+                    pass
 
-            # Return error as content for graceful handling
-            return LLMResponse(
-                content=f"Error calling LLM: {str(e)}",
-                finish_reason="error",
-            )
-    
+            raise  # Let chat() handle fallback
+
+    def _inject_fallback_credentials(self, model: str, kwargs: dict[str, Any]) -> None:
+        """For fallback models, look up the correct API key from config."""
+        if model == self.default_model:
+            return
+        try:
+            from nanobot.config.loader import load_config
+            config = load_config()
+            provider_cfg = config.get_provider(model)
+            if provider_cfg and provider_cfg.api_key:
+                kwargs["api_key"] = provider_cfg.api_key
+                api_base = config.get_api_base(model)
+                if api_base:
+                    kwargs["api_base"] = api_base
+        except Exception:
+            pass  # Fall back to default credentials
+
     @staticmethod
     def _is_tool_call_failure(exc: Exception) -> bool:
         """Check if the exception is a tool call formatting failure."""
