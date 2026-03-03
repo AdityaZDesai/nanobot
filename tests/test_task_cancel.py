@@ -253,3 +253,17 @@ class TestModelRouting:
 
         tier = provider._classify_difficulty(messages)
         assert tier == "medium"
+
+    def test_classifier_single_current_turn_tool_call_stays_medium(self):
+        from nanobot.providers.litellm_provider import LiteLLMProvider
+
+        provider = LiteLLMProvider(default_model="groq/llama-3.3-70b-versatile")
+        messages = [
+            {"role": "system", "content": "s"},
+            {"role": "user", "content": "Open chrome on my desktop"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
+            {"role": "tool", "content": "ok"},
+        ]
+
+        tier = provider._classify_difficulty(messages)
+        assert tier == "medium"

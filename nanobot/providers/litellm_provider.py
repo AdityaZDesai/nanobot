@@ -307,10 +307,10 @@ class LiteLLMProvider(LLMProvider):
         if tool_call_count >= 3:
             score += 3
         elif tool_call_count >= 1:
-            score += 1
+            score += 0
 
         # If we're mid-chain processing tool results, bump slightly
-        if turn_slice and turn_slice[-1].get("role") == "tool":
+        if tool_call_count >= 2 and turn_slice and turn_slice[-1].get("role") == "tool":
             score += 1
 
         # Map score to tier.
