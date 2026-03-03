@@ -278,6 +278,31 @@ class AgentLoop:
             )
         )
 
+    async def _chat_with_model(self, messages: list[dict], model: str) -> Any:
+        """Call provider with an explicit model, disabling fallback fanout when available."""
+        fallback_models = getattr(self.provider, "fallback_models", None)
+        if isinstance(fallback_models, list):
+            original = list(fallback_models)
+            self.provider.fallback_models = []
+            try:
+                return await self.provider.chat(
+                    messages=messages,
+                    tools=self.tools.get_definitions(),
+                    model=model,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                )
+            finally:
+                self.provider.fallback_models = original
+
+        return await self.provider.chat(
+            messages=messages,
+            tools=self.tools.get_definitions(),
+            model=model,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
+
     _STALE_REFUSAL_PATTERNS = (
         re.compile(r"\bunable to take control\b", re.IGNORECASE),
         re.compile(r"\bcan(?:not|'t)\s+take control\b", re.IGNORECASE),
@@ -342,13 +367,7 @@ class AgentLoop:
                     "Tier-routed model appears unavailable (404); retrying with default model {}",
                     self.model,
                 )
-                response = await self.provider.chat(
-                    messages=messages,
-                    tools=self.tools.get_definitions(),
-                    model=self.model,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
+                response = await self._chat_with_model(messages, self.model)
 
             if response.has_tool_calls:
                 if on_progress:

@@ -182,7 +182,6 @@ class TestModelRouting:
                 {"role": "system", "content": "s"},
                 {"role": "user", "content": "hello"},
             ],
-            current_user_text="hello",
         )
 
         assert loop.provider.chat.await_args.kwargs["model"] is None
@@ -212,15 +211,21 @@ class TestModelRouting:
         loop, _ = _make_loop()
         loop.model = "groq/llama-3.3-70b-versatile"
         loop.provider.model_tiers = {"hard": "google/gemini-2.5-flash"}
-        loop.provider.chat = AsyncMock(
-            side_effect=[
+        loop.provider.fallback_models = ["google/gemini-2.5-flash"]
+        fallback_snapshots: list[list[str]] = []
+        responses = [
                 LLMResponse(
                     content='Error calling LLM: litellm.NotFoundError: GeminiException - {"error":{"message":"Not Found","code":404}}',
                     finish_reason="error",
                 ),
                 LLMResponse(content="ok", finish_reason="stop"),
             ]
-        )
+
+        async def _chat_side_effect(*_args, **_kwargs):
+            fallback_snapshots.append(list(loop.provider.fallback_models))
+            return responses.pop(0)
+
+        loop.provider.chat = AsyncMock(side_effect=_chat_side_effect)
         loop.tools.get_definitions = MagicMock(return_value=[])
 
         final_content, _, _ = await loop._run_agent_loop(
@@ -234,6 +239,9 @@ class TestModelRouting:
         assert loop.provider.chat.await_count == 2
         assert loop.provider.chat.await_args_list[0].kwargs["model"] is None
         assert loop.provider.chat.await_args_list[1].kwargs["model"] == loop.model
+        assert fallback_snapshots[0] == ["google/gemini-2.5-flash"]
+        assert fallback_snapshots[1] == []
+        assert loop.provider.fallback_models == ["google/gemini-2.5-flash"]
 
     def test_classifier_ignores_old_turn_tool_calls(self):
         from nanobot.providers.litellm_provider import LiteLLMProvider
