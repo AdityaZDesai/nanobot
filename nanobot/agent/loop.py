@@ -258,6 +258,26 @@ class AgentLoop:
 
         return ", ".join(_fmt(tc) for tc in tool_calls)
 
+    @staticmethod
+    def _is_model_not_found_error(response: Any) -> bool:
+        """Return True if provider returned an error indicating model not found (404)."""
+        if not response or getattr(response, "finish_reason", "") != "error":
+            return False
+        content = getattr(response, "content", None)
+        if not isinstance(content, str):
+            return False
+        text = content.lower()
+        return any(
+            marker in text
+            for marker in (
+                "notfounderror",
+                "not found",
+                '"code":404',
+                "code:404",
+                "model not found",
+            )
+        )
+
     _STALE_REFUSAL_PATTERNS = (
         re.compile(r"\bunable to take control\b", re.IGNORECASE),
         re.compile(r"\bcan(?:not|'t)\s+take control\b", re.IGNORECASE),
@@ -310,6 +330,25 @@ class AgentLoop:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
+
+            # If tier routing selected an unavailable model (404), retry once with
+            # the configured default model for this loop.
+            if (
+                model_for_turn is None
+                and self._is_model_not_found_error(response)
+                and self.model
+            ):
+                logger.warning(
+                    "Tier-routed model appears unavailable (404); retrying with default model {}",
+                    self.model,
+                )
+                response = await self.provider.chat(
+                    messages=messages,
+                    tools=self.tools.get_definitions(),
+                    model=self.model,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                )
 
             if response.has_tool_calls:
                 if on_progress:

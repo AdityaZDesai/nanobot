@@ -204,3 +204,33 @@ class TestModelRouting:
         )
 
         assert loop.provider.chat.await_args.kwargs["model"] is None
+
+    @pytest.mark.asyncio
+    async def test_model_not_found_retries_with_default_model(self):
+        from nanobot.providers.base import LLMResponse
+
+        loop, _ = _make_loop()
+        loop.model = "groq/llama-3.3-70b-versatile"
+        loop.provider.model_tiers = {"hard": "google/gemini-2.5-flash"}
+        loop.provider.chat = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content='Error calling LLM: litellm.NotFoundError: GeminiException - {"error":{"message":"Not Found","code":404}}',
+                    finish_reason="error",
+                ),
+                LLMResponse(content="ok", finish_reason="stop"),
+            ]
+        )
+        loop.tools.get_definitions = MagicMock(return_value=[])
+
+        final_content, _, _ = await loop._run_agent_loop(
+            [
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "Open chrome on my desktop"},
+            ]
+        )
+
+        assert final_content == "ok"
+        assert loop.provider.chat.await_count == 2
+        assert loop.provider.chat.await_args_list[0].kwargs["model"] is None
+        assert loop.provider.chat.await_args_list[1].kwargs["model"] == loop.model
