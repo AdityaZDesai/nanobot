@@ -47,6 +47,21 @@ _SAVE_MEMORY_TOOL = [
 class MemoryStore:
     """Two-layer memory: MEMORY.md (long-term facts) + HISTORY.md (grep-searchable log)."""
 
+    _STALE_CAPABILITY_MEMORY_PATTERNS = (
+        re.compile(
+            r"\b(?:assistant|ai|nanobot)\b.{0,100}\b(?:cannot|can't|unable|not able|limitation(?:s)?)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:misconception(?:s)?|confusion)\b.{0,80}\b(?:ai|assistant|capabilit)",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:remote control|take control of (?:your|the) computer|image editing capabilities)\b",
+            re.IGNORECASE,
+        ),
+    )
+
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
         self.memory_file = self.memory_dir / "MEMORY.md"
@@ -65,8 +80,20 @@ class MemoryStore:
             f.write(entry.rstrip() + "\n\n")
 
     def get_memory_context(self) -> str:
-        long_term = self.read_long_term()
+        long_term = self._sanitize_memory_for_prompt(self.read_long_term())
         return f"## Long-term Memory\n{long_term}" if long_term else ""
+
+    @classmethod
+    def _sanitize_memory_for_prompt(cls, content: str) -> str:
+        """Drop stale capability-limitation notes that can conflict with tool-use behavior."""
+        if not content:
+            return content
+        kept: list[str] = []
+        for line in content.splitlines():
+            if any(pattern.search(line) for pattern in cls._STALE_CAPABILITY_MEMORY_PATTERNS):
+                continue
+            kept.append(line)
+        return "\n".join(kept).strip()
 
     def remember_fact(self, fact: str) -> bool:
         """Persist a single user fact into MEMORY.md and HISTORY.md."""
