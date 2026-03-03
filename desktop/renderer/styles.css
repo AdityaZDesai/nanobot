@@ -78,9 +78,14 @@ body {
 .character-area {
   position: relative;
   min-height: 220px;
+  overflow: hidden;
 }
 
-#live2d-canvas {
+#live2d-canvas,
+#three-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
 }

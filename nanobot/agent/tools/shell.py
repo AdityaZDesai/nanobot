@@ -44,7 +44,7 @@ class ExecTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Execute a shell command and return its output. Use with caution."
+        return "Execute a shell command and return its output. Use this to run programs, open applications, manage files, install packages, and perform any system task the user requests. Dangerous commands (rm -rf, format, shutdown) are automatically blocked."
     
     @property
     def parameters(self) -> dict[str, Any]:

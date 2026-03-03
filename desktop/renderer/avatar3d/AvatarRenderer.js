@@ -150,9 +150,10 @@ class AvatarRenderer {
     this.model = gltf.scene;
     this.scene.add(this.model);
 
-    // Collect skinned meshes for blendshape access
+    // Collect skinned meshes and static meshes
     this.meshes = [];
     this.skeleton = null;
+    const staticMeshes = [];
     this.model.traverse((child) => {
       if (child.isSkinnedMesh) {
         this.meshes.push(child);
@@ -164,10 +165,18 @@ class AvatarRenderer {
       } else if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
+        staticMeshes.push(child);
       }
     });
 
-    // Auto-frame camera on model
+    // Reparent orphan static meshes to skeleton bones so they follow movement.
+    // Many game models export armor/clothing as separate meshes at the scene root
+    // that aren't children of any bone — they need to be attached to follow animation.
+    if (this.skeleton) {
+      this._reparentStaticMeshes(staticMeshes);
+    }
+
+    // Auto-frame camera on model (after reparenting so bounds are correct)
     const box = new THREE.Box3().setFromObject(this.model);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
@@ -220,6 +229,59 @@ class AvatarRenderer {
     }
 
     this.renderer.render(this.scene, this.camera);
+  }
+
+  _reparentStaticMeshes(staticMeshes) {
+    // Build a bone lookup by name (lowercase)
+    const boneMap = {};
+    for (const bone of this.skeleton.bones) {
+      boneMap[bone.name.toLowerCase()] = bone;
+    }
+
+    // Name patterns → which bone each mesh should be parented to
+    const parentRules = [
+      { pattern: /helmet|visor/i, bones: ["bip001-head", "head"] },
+      { pattern: /hair/i, bones: ["bip001-head", "head"] },
+      { pattern: /cape|cloak|back/i, bones: ["bip001-spine2", "bip001-spine1", "spine2"] },
+      { pattern: /shoulder|pauldron/i, bones: ["bip001-spine2", "bip001-spine1", "spine2"] },
+      { pattern: /body|chest|torso|armor/i, bones: ["bip001-spine1", "bip001-spine", "spine1", "spine"] },
+      { pattern: /glove|hand|bracer/i, bones: ["bip001-spine2", "spine2"] },
+      { pattern: /pants|leg|skirt|waist/i, bones: ["bip001-pelvis", "bip001-spine", "pelvis"] },
+      { pattern: /boot|shoe|foot/i, bones: ["bip001-pelvis", "root"] },
+    ];
+
+    // Ensure world matrices are up to date before reparenting
+    this.model.updateWorldMatrix(true, true);
+
+    for (const mesh of staticMeshes) {
+      // Skip meshes that are already children of a bone (not at scene/model root)
+      if (mesh.parent !== this.model) continue;
+
+      const meshName = mesh.name || "";
+      let targetBone = null;
+
+      for (const rule of parentRules) {
+        if (rule.pattern.test(meshName)) {
+          for (const boneName of rule.bones) {
+            if (boneMap[boneName]) {
+              targetBone = boneMap[boneName];
+              break;
+            }
+          }
+          if (targetBone) break;
+        }
+      }
+
+      // Fallback: parent unmatched meshes to spine (so at least breathing moves them)
+      if (!targetBone) {
+        targetBone = boneMap["bip001-spine"] || boneMap["spine"] || boneMap["root"];
+      }
+
+      if (targetBone) {
+        _log("[AvatarRenderer] reparenting '" + meshName + "' → bone '" + targetBone.name + "'");
+        targetBone.attach(mesh); // preserves world transform
+      }
+    }
   }
 
   _handleResize() {
