@@ -644,6 +644,20 @@ class LiteLLMProvider(LLMProvider):
                         count=1,
                         flags=re.DOTALL,
                     )
+                    clean = re.sub(
+                        r'\{\s*"type"\s*:\s*"function"\s*,\s*"name"\s*:\s*"[\w\-]+"\s*,\s*"(?:arguments|parameters)"\s*:\s*\{.*?\}\s*\}',
+                        "",
+                        clean,
+                        count=1,
+                        flags=re.DOTALL,
+                    )
+                    clean = re.sub(
+                        r'\{\s*"name"\s*:\s*"[\w\-]+"\s*,\s*"(?:arguments|parameters)"\s*:\s*\{.*?\}\s*\}',
+                        "",
+                        clean,
+                        count=1,
+                        flags=re.DOTALL,
+                    )
                 result = LLMResponse(
                     content=clean.strip() or None,
                     tool_calls=parsed,
@@ -687,6 +701,49 @@ class LiteLLMProvider(LLMProvider):
                     name=match.group(1),
                     arguments=args if isinstance(args, dict) else {},
                 ))
+            except Exception:
+                continue
+
+        if calls:
+            return calls
+
+        # Pattern 3: {"type":"function","name":"exec","parameters":{...}}
+        # Also accepts "arguments" in place of "parameters".
+        for match in re.finditer(
+            r'\{\s*"type"\s*:\s*"function"\s*,\s*"name"\s*:\s*"([\w\-]+)"\s*,\s*"(?:arguments|parameters)"\s*:\s*(\{.*?\})\s*\}',
+            text,
+            re.DOTALL,
+        ):
+            try:
+                args = json_repair.loads(match.group(2))
+                calls.append(
+                    ToolCallRequest(
+                        id=f"text_{uuid.uuid4().hex[:8]}",
+                        name=match.group(1),
+                        arguments=args if isinstance(args, dict) else {},
+                    )
+                )
+            except Exception:
+                continue
+
+        if calls:
+            return calls
+
+        # Pattern 4: {"name":"exec","parameters":{...}}
+        for match in re.finditer(
+            r'\{\s*"name"\s*:\s*"([\w\-]+)"\s*,\s*"(?:arguments|parameters)"\s*:\s*(\{.*?\})\s*\}',
+            text,
+            re.DOTALL,
+        ):
+            try:
+                args = json_repair.loads(match.group(2))
+                calls.append(
+                    ToolCallRequest(
+                        id=f"text_{uuid.uuid4().hex[:8]}",
+                        name=match.group(1),
+                        arguments=args if isinstance(args, dict) else {},
+                    )
+                )
             except Exception:
                 continue
 

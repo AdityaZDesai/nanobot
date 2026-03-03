@@ -267,3 +267,24 @@ class TestModelRouting:
 
         tier = provider._classify_difficulty(messages)
         assert tier == "medium"
+
+    def test_parse_text_tool_call_function_parameters_format(self):
+        from nanobot.providers.litellm_provider import LiteLLMProvider
+
+        text = (
+            'I will do that now. '
+            '{"type":"function","name":"exec","parameters":{"command":"start chrome"}}'
+        )
+        calls = LiteLLMProvider._parse_text_tool_calls(text)
+        assert len(calls) == 1
+        assert calls[0].name == "exec"
+        assert calls[0].arguments == {"command": "start chrome"}
+
+    def test_parse_text_tool_call_name_parameters_format(self):
+        from nanobot.providers.litellm_provider import LiteLLMProvider
+
+        text = '{"name":"exec","parameters":{"command":"start chrome"}}'
+        calls = LiteLLMProvider._parse_text_tool_calls(text)
+        assert len(calls) == 1
+        assert calls[0].name == "exec"
+        assert calls[0].arguments == {"command": "start chrome"}
