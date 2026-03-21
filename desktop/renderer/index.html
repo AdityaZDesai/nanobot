@@ -9,10 +9,10 @@
   <body>
     <div id="overlay-root" class="avatar-only">
       <header class="topbar">
-        <div class="drag-handle">Nanobot Overlay</div>
+        <div class="drag-handle"></div>
         <div class="topbar-controls">
-          <label class="toggle"><input id="pin-top" type="checkbox" checked />Pin</label>
-          <label class="toggle"><input id="click-through" type="checkbox" />Pass-through</label>
+          <label class="topbar-toggle" title="Always on top"><input id="pin-top" type="checkbox" checked /><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v10m0 0l-4-4m4 4l4-4M5 22h14"/></svg></label>
+          <label class="topbar-toggle" title="Click pass-through"><input id="click-through" type="checkbox" /><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 15l-2 5L9 9l11 4-5 2z"/><path d="M2 2l20 20" stroke-dasharray="3 3" opacity="0.4"/></svg></label>
         </div>
       </header>
 
@@ -23,50 +23,95 @@
 
       <section class="chat-panel" id="chat-panel">
         <div id="messages" class="messages"></div>
+
         <div class="composer">
-          <textarea id="input" rows="2" placeholder="Talk to nanobot..."></textarea>
-          <div class="actions">
-            <button id="voice-in" title="Voice input">Mic</button>
-            <button id="voice-out" title="Toggle TTS">Voice</button>
-            <button id="send">Send</button>
+          <div class="composer-row">
+            <textarea id="input" rows="1" placeholder="Say something..."></textarea>
+            <button id="send" class="btn-send" title="Send">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+          </div>
+          <div class="composer-tools">
+            <button id="voice-in" class="btn-tool" title="Voice input">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="1" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0014 0"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            </button>
+            <button id="voice-out" class="btn-tool active" title="Toggle TTS">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>
+            </button>
+            <div class="composer-spacer"></div>
+            <button id="settings-toggle" class="btn-tool" title="Settings">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+            </button>
           </div>
         </div>
-        <div class="settings-row">
-          <label>Avatar <select id="model-select">
-            <optgroup label="2D Avatars">
-              <option value="hiyori">Hiyori (HD)</option>
-              <option value="koharu">Koharu</option>
-              <option value="shizuku">Shizuku</option>
-              <option value="miku">Miku</option>
-              <option value="hijiki">Hijiki</option>
-              <option value="tororo">Tororo</option>
-              <option value="haruto">Haruto</option>
-              <option value="wanko">Wanko</option>
-              <option value="z16">Z16</option>
-              <option value="ni-j">Ni-J</option>
-              <option value="epsilon2_1">Epsilon</option>
-            </optgroup>
-            <optgroup id="3d-optgroup" label="3D Avatars">
-            </optgroup>
-          </select></label>
-          <label>LLM <select id="llm-profile">
-            <option value="standard">Standard (Groq)</option>
-            <option value="openrouter-paid">OpenRouter Paid (GPT-4o mini)</option>
-          </select></label>
-          <label>Size <input id="avatar-size" type="range" min="30" max="200" value="90" /></label>
-          <label>Opacity <input id="opacity" type="range" min="25" max="100" value="100" /></label>
-          <label class="toggle"><input id="vision-enabled" type="checkbox" checked />Vision</label>
-          <label class="toggle"><input id="proactive-enabled" type="checkbox" checked />Proactive</label>
-          <label>Every <input id="capture-interval" type="number" min="2" max="60" value="5" />s</label>
-          <span id="vision-status">Capturing</span>
-          <span id="proactive-status">Nudges: 0/2</span>
-        </div>
-        <div class="settings-row proactive-controls">
-          <label>Idle <input id="proactive-idle" type="number" min="10" max="240" value="45" />m</label>
-          <label>Cooldown <input id="proactive-cooldown" type="number" min="15" max="720" value="120" />m</label>
-          <label>Max/day <input id="proactive-max" type="number" min="1" max="8" value="2" /></label>
-          <label>Chance <input id="proactive-chance" type="number" min="5" max="100" value="35" />%</label>
-          <label>Quiet <input id="proactive-quiet-start" type="number" min="0" max="23" value="22" />-<input id="proactive-quiet-end" type="number" min="0" max="23" value="8" /></label>
+
+        <!-- Settings drawer (hidden by default) -->
+        <div class="settings-drawer" id="settings-drawer">
+          <div class="settings-group">
+            <div class="setting-label">Avatar</div>
+            <select id="model-select">
+              <optgroup label="2D Avatars">
+                <option value="hiyori">Hiyori (HD)</option>
+                <option value="koharu">Koharu</option>
+                <option value="shizuku">Shizuku</option>
+                <option value="miku">Miku</option>
+                <option value="hijiki">Hijiki</option>
+                <option value="tororo">Tororo</option>
+                <option value="haruto">Haruto</option>
+                <option value="wanko">Wanko</option>
+                <option value="z16">Z16</option>
+                <option value="ni-j">Ni-J</option>
+                <option value="epsilon2_1">Epsilon</option>
+              </optgroup>
+              <optgroup id="3d-optgroup" label="3D Avatars">
+              </optgroup>
+            </select>
+          </div>
+          <div class="settings-group">
+            <div class="setting-label">Model</div>
+            <select id="llm-profile">
+              <option value="auto">Auto (smart routing)</option>
+              <optgroup label="Free">
+                <option value="groq-70b">Llama 3.3 70B</option>
+                <option value="groq-fast">Llama 3.1 8B</option>
+              </optgroup>
+              <optgroup label="Budget">
+                <option value="openrouter-gemini-flash">Gemini 2.5 Flash</option>
+                <option value="openrouter-gpt4o-mini">GPT-4o mini</option>
+              </optgroup>
+              <optgroup label="Quality">
+                <option value="openrouter-gpt4o">GPT-4o</option>
+                <option value="openrouter-sonnet">Claude Sonnet 4.6</option>
+              </optgroup>
+            </select>
+          </div>
+          <div class="settings-row-inline">
+            <div class="settings-group compact">
+              <div class="setting-label">Size</div>
+              <input id="avatar-size" type="range" min="30" max="200" value="90" />
+            </div>
+            <div class="settings-group compact">
+              <div class="setting-label">Opacity</div>
+              <input id="opacity" type="range" min="25" max="100" value="100" />
+            </div>
+          </div>
+          <div class="settings-divider"></div>
+          <div class="settings-row-inline">
+            <label class="setting-switch"><input id="vision-enabled" type="checkbox" checked /><span>Vision</span></label>
+            <label class="setting-switch"><input id="proactive-enabled" type="checkbox" checked /><span>Proactive</span></label>
+            <span class="setting-status" id="vision-status">Capturing</span>
+            <span class="setting-status" id="proactive-status">0/2</span>
+          </div>
+          <div class="settings-row-inline compact-nums">
+            <label>Every <input id="capture-interval" type="number" min="2" max="60" value="5" />s</label>
+            <label>Idle <input id="proactive-idle" type="number" min="10" max="240" value="45" />m</label>
+            <label>CD <input id="proactive-cooldown" type="number" min="15" max="720" value="120" />m</label>
+          </div>
+          <div class="settings-row-inline compact-nums">
+            <label>Max <input id="proactive-max" type="number" min="1" max="8" value="2" />/d</label>
+            <label>Chance <input id="proactive-chance" type="number" min="5" max="100" value="35" />%</label>
+            <label>Quiet <input id="proactive-quiet-start" type="number" min="0" max="23" value="22" />–<input id="proactive-quiet-end" type="number" min="0" max="23" value="8" /></label>
+          </div>
         </div>
       </section>
     </div>

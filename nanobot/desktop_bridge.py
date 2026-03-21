@@ -64,6 +64,8 @@ class DesktopBridge:
                 default_model=model,
                 extra_headers=provider_cfg.extra_headers if provider_cfg else None,
                 provider_name=provider_name,
+                fallback_models=config.agents.defaults.fallback_models or [],
+                model_tiers=config.agents.defaults.model_tiers or {},
             )
 
         cron_store_path = get_data_dir() / "cron" / "jobs.json"

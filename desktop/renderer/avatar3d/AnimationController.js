@@ -19,6 +19,8 @@ class AnimationController {
     this._jawBone = null;
     this._shoulderL = null;
     this._shoulderR = null;
+    this._clavicleL = null;
+    this._clavicleR = null;
     this._upperArmL = null;
     this._upperArmR = null;
     this._forearmL = null;
@@ -75,7 +77,13 @@ class AnimationController {
       "eyeL:", this._eyeBoneL ? this._eyeBoneL.name : "NONE",
       "eyeR:", this._eyeBoneR ? this._eyeBoneR.name : "NONE",
       "upperLidsL:", this._upperLidBonesL.length,
-      "facialBones:", this._hasFacialBones
+      "facialBones:", this._hasFacialBones,
+      "upperArmL:", this._upperArmL ? this._upperArmL.name : "NONE",
+      "upperArmR:", this._upperArmR ? this._upperArmR.name : "NONE",
+      "forearmL:", this._forearmL ? this._forearmL.name : "NONE",
+      "forearmR:", this._forearmR ? this._forearmR.name : "NONE",
+      "clavicleL:", this._clavicleL ? this._clavicleL.name : "NONE",
+      "clavicleR:", this._clavicleR ? this._clavicleR.name : "NONE"
     );
 
     // Index all animation clips from the GLB
@@ -132,16 +140,22 @@ class AnimationController {
       if (!this._shoulderR && (lower === "shoulderr" || lower.includes("shoulder_r") || lower.includes("rightshoulder"))) {
         this._shoulderR = bone;
       }
-      if (!this._upperArmL && (lower === "upper_arml" || lower.includes("upperarm_l") || lower.includes("leftarm"))) {
+      if (!this._clavicleL && (lower === "bip001-l-clavicle" || lower.includes("clavicle_l") || lower.includes("leftclavicle") || lower.includes("l-clavicle") || lower.includes("l_clavicle"))) {
+        this._clavicleL = bone;
+      }
+      if (!this._clavicleR && (lower === "bip001-r-clavicle" || lower.includes("clavicle_r") || lower.includes("rightclavicle") || lower.includes("r-clavicle") || lower.includes("r_clavicle"))) {
+        this._clavicleR = bone;
+      }
+      if (!this._upperArmL && (lower === "upper_arml" || lower.includes("upperarm_l") || lower.includes("leftarm") || lower === "bip001-l-upperarm" || lower === "l_upperarm")) {
         this._upperArmL = bone;
       }
-      if (!this._upperArmR && (lower === "upper_armr" || lower.includes("upperarm_r") || lower.includes("rightarm"))) {
+      if (!this._upperArmR && (lower === "upper_armr" || lower.includes("upperarm_r") || lower.includes("rightarm") || lower === "bip001-r-upperarm" || lower === "r_upperarm")) {
         this._upperArmR = bone;
       }
-      if (!this._forearmL && (lower === "forearml" || lower.includes("forearm_l") || lower.includes("leftforearm"))) {
+      if (!this._forearmL && (lower === "forearml" || lower.includes("forearm_l") || lower.includes("leftforearm") || lower === "bip001-l-forearm" || lower === "l_forearm")) {
         this._forearmL = bone;
       }
-      if (!this._forearmR && (lower === "forearmr" || lower.includes("forearm_r") || lower.includes("rightforearm"))) {
+      if (!this._forearmR && (lower === "forearmr" || lower.includes("forearm_r") || lower.includes("rightforearm") || lower === "bip001-r-forearm" || lower === "r_forearm")) {
         this._forearmR = bone;
       }
 
@@ -186,6 +200,33 @@ class AnimationController {
       }
     }
 
+    // Fallback arm search — catch any naming convention we missed
+    if (!this._upperArmL || !this._upperArmR) {
+      for (const bone of skeleton.bones) {
+        const l = bone.name.toLowerCase();
+        if (!this._upperArmL && (l.includes("upperarm") || l.includes("upper_arm") || l.includes("upper arm")) && (l.includes("l") && !l.includes("r"))) {
+          this._upperArmL = bone;
+        }
+        if (!this._upperArmR && (l.includes("upperarm") || l.includes("upper_arm") || l.includes("upper arm")) && (l.includes("r") && !l.includes("l"))) {
+          this._upperArmR = bone;
+        }
+      }
+    }
+    if (!this._forearmL || !this._forearmR) {
+      for (const bone of skeleton.bones) {
+        const l = bone.name.toLowerCase();
+        if (!this._forearmL && (l.includes("forearm") || l.includes("lowerarm") || l.includes("lower_arm")) && (l.includes("l") && !l.includes("r"))) {
+          this._forearmL = bone;
+        }
+        if (!this._forearmR && (l.includes("forearm") || l.includes("lowerarm") || l.includes("lower_arm")) && (l.includes("r") && !l.includes("l"))) {
+          this._forearmR = bone;
+        }
+      }
+    }
+
+    // Debug: dump all bone names so we can diagnose matching issues
+    console.log("[AnimCtrl] all skeleton bones:", skeleton.bones.map(b => b.name).join(", "));
+
     this._hasFacialBones = this._upperLidBonesL.length > 0 || this._eyeBoneL != null;
   }
 
@@ -208,6 +249,8 @@ class AnimationController {
     if (this._spine2Bone) bonesToCapture.push(this._spine2Bone);
     if (this._shoulderL) bonesToCapture.push(this._shoulderL);
     if (this._shoulderR) bonesToCapture.push(this._shoulderR);
+    if (this._clavicleL) bonesToCapture.push(this._clavicleL);
+    if (this._clavicleR) bonesToCapture.push(this._clavicleR);
     if (this._upperArmL) bonesToCapture.push(this._upperArmL);
     if (this._upperArmR) bonesToCapture.push(this._upperArmR);
     if (this._forearmL) bonesToCapture.push(this._forearmL);
@@ -363,42 +406,78 @@ class AnimationController {
   }
 
   _updateArmsDown(delta) {
-    const armLerp = (1 - Math.pow(0.9, delta * 60)) * 0.45;
+    const armLerp = (1 - Math.pow(0.85, delta * 60)) * 0.5;
 
-    if (this._upperArmL) {
-      const rest = this._restPoses.get(this._upperArmL);
-      if (rest) {
-        const targetX = rest.x + 0.08;
-        const targetY = rest.y + 0.04;
-        const targetZ = rest.z + 0.35;
-        this._upperArmL.rotation.x += (targetX - this._upperArmL.rotation.x) * armLerp;
-        this._upperArmL.rotation.y += (targetY - this._upperArmL.rotation.y) * armLerp;
-        this._upperArmL.rotation.z += (targetZ - this._upperArmL.rotation.z) * armLerp;
+    // Use upper arm bones if available, otherwise fall back to clavicles
+    const leftArm = this._upperArmL || this._clavicleL;
+    const rightArm = this._upperArmR || this._clavicleR;
+    const usingClavicles = !this._upperArmL && (this._clavicleL || this._clavicleR);
+
+    // Clavicles need different rotation values — they rotate the whole shoulder+arm unit
+    // Upper arm bones rotate just the arm from the shoulder joint
+    if (usingClavicles) {
+      if (leftArm) {
+        const rest = this._restPoses.get(leftArm);
+        if (rest) {
+          // Rotate clavicle down and slightly forward
+          const targetX = rest.x + 0.1;
+          const targetY = rest.y - 0.15;
+          const targetZ = rest.z + 0.55;   // rotate down from T-pose
+          leftArm.rotation.x += (targetX - leftArm.rotation.x) * armLerp;
+          leftArm.rotation.y += (targetY - leftArm.rotation.y) * armLerp;
+          leftArm.rotation.z += (targetZ - leftArm.rotation.z) * armLerp;
+        }
+      }
+      if (rightArm) {
+        const rest = this._restPoses.get(rightArm);
+        if (rest) {
+          const targetX = rest.x + 0.1;
+          const targetY = rest.y + 0.15;
+          const targetZ = rest.z - 0.55;   // mirror
+          rightArm.rotation.x += (targetX - rightArm.rotation.x) * armLerp;
+          rightArm.rotation.y += (targetY - rightArm.rotation.y) * armLerp;
+          rightArm.rotation.z += (targetZ - rightArm.rotation.z) * armLerp;
+        }
+      }
+    } else {
+      // Standard upper arm rotation
+      if (leftArm) {
+        const rest = this._restPoses.get(leftArm);
+        if (rest) {
+          const targetX = rest.x + 0.15;
+          const targetY = rest.y + 0.06;
+          const targetZ = rest.z + 1.2;
+          leftArm.rotation.x += (targetX - leftArm.rotation.x) * armLerp;
+          leftArm.rotation.y += (targetY - leftArm.rotation.y) * armLerp;
+          leftArm.rotation.z += (targetZ - leftArm.rotation.z) * armLerp;
+        }
+      }
+      if (rightArm) {
+        const rest = this._restPoses.get(rightArm);
+        if (rest) {
+          const targetX = rest.x + 0.15;
+          const targetY = rest.y - 0.06;
+          const targetZ = rest.z - 1.2;
+          rightArm.rotation.x += (targetX - rightArm.rotation.x) * armLerp;
+          rightArm.rotation.y += (targetY - rightArm.rotation.y) * armLerp;
+          rightArm.rotation.z += (targetZ - rightArm.rotation.z) * armLerp;
+        }
       }
     }
 
-    if (this._upperArmR) {
-      const rest = this._restPoses.get(this._upperArmR);
-      if (rest) {
-        const targetX = rest.x + 0.08;
-        const targetY = rest.y - 0.04;
-        const targetZ = rest.z - 0.35;
-        this._upperArmR.rotation.x += (targetX - this._upperArmR.rotation.x) * armLerp;
-        this._upperArmR.rotation.y += (targetY - this._upperArmR.rotation.y) * armLerp;
-        this._upperArmR.rotation.z += (targetZ - this._upperArmR.rotation.z) * armLerp;
-      }
-    }
-
+    // Forearm bend (only if forearm bones exist)
     if (this._forearmL) {
       const rest = this._restPoses.get(this._forearmL);
       if (rest) {
-        this._forearmL.rotation.x += (rest.x + 0.04 - this._forearmL.rotation.x) * armLerp * 0.7;
+        this._forearmL.rotation.x += (rest.x + 0.15 - this._forearmL.rotation.x) * armLerp * 0.7;
+        this._forearmL.rotation.z += (rest.z + 0.1 - this._forearmL.rotation.z) * armLerp * 0.5;
       }
     }
     if (this._forearmR) {
       const rest = this._restPoses.get(this._forearmR);
       if (rest) {
-        this._forearmR.rotation.x += (rest.x + 0.04 - this._forearmR.rotation.x) * armLerp * 0.7;
+        this._forearmR.rotation.x += (rest.x + 0.15 - this._forearmR.rotation.x) * armLerp * 0.7;
+        this._forearmR.rotation.z += (rest.z - 0.1 - this._forearmR.rotation.z) * armLerp * 0.5;
       }
     }
   }
@@ -548,6 +627,8 @@ class AnimationController {
     this._jawBone = null;
     this._shoulderL = null;
     this._shoulderR = null;
+    this._clavicleL = null;
+    this._clavicleR = null;
     this._upperArmL = null;
     this._upperArmR = null;
     this._forearmL = null;

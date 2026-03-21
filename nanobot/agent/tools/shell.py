@@ -44,7 +44,14 @@ class ExecTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Execute a shell command and return its output. Use this to run programs, open applications, manage files, install packages, and perform any system task the user requests. Dangerous commands (rm -rf, format, shutdown) are automatically blocked."
+        return (
+            "Execute a shell command and return its output. Use this to run programs, open applications, "
+            "manage files, install packages, and perform any system task the user requests. "
+            "You can also automate UI interactions using PowerShell: "
+            "click at coordinates with Add-Type/mouse_event, send keystrokes with [SendKeys]::SendWait(), "
+            "or use pyautogui (pip install pyautogui) for mouse clicks, typing, and screenshots. "
+            "Dangerous commands (rm -rf, format, shutdown) are automatically blocked."
+        )
     
     @property
     def parameters(self) -> dict[str, Any]:

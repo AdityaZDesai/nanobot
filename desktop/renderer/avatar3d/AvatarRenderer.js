@@ -184,9 +184,10 @@ class AvatarRenderer {
     // Position shadow plane at model's feet
     this._shadowPlane.position.y = box.min.y;
 
-    // Frame upper body
-    this.camera.position.set(0, center.y + size.y * 0.1, size.y * 1.6);
-    this.camera.lookAt(center.x, center.y + size.y * 0.15, center.z);
+    // Frame head + upper chest — tight crop hides T-pose arms on static models
+    const headY = center.y + size.y * 0.3;
+    this.camera.position.set(0, headY, size.y * 0.9);
+    this.camera.lookAt(center.x, headY - size.y * 0.02, center.z);
 
     return { gltf, meshes: this.meshes, skeleton: this.skeleton };
   }

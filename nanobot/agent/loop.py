@@ -259,6 +259,44 @@ class AgentLoop:
         return ", ".join(_fmt(tc) for tc in tool_calls)
 
     @staticmethod
+    def _dedupe_tool_calls(tool_calls: list) -> list[tuple[Any, bool]]:
+        """Deduplicate tool calls, returning (tool_call, should_skip) pairs.
+
+        Exact duplicates (same name + arguments) are skipped.  For ``exec``
+        calls, a command that is a prefix of a later command is also skipped
+        (e.g. ``start chrome`` is subsumed by ``start chrome chrome://extensions``).
+        """
+        seen: set[tuple[str, str]] = set()
+        # Collect all exec commands to detect prefix-subsumption
+        exec_cmds: list[str] = []
+        for tc in tool_calls:
+            if tc.name == "exec":
+                cmd = (tc.arguments or {}).get("command", "")
+                exec_cmds.append(cmd)
+
+        results: list[tuple[Any, bool]] = []
+        for tc in tool_calls:
+            key = (tc.name, json.dumps(tc.arguments, sort_keys=True, ensure_ascii=False))
+            if key in seen:
+                results.append((tc, True))
+                continue
+            seen.add(key)
+
+            # For exec: skip if a later exec command is a strict superset
+            if tc.name == "exec":
+                cmd = (tc.arguments or {}).get("command", "")
+                subsumed = any(
+                    other != cmd and other.startswith(cmd)
+                    for other in exec_cmds
+                )
+                if subsumed:
+                    results.append((tc, True))
+                    continue
+
+            results.append((tc, False))
+        return results
+
+    @staticmethod
     def _is_model_not_found_error(response: Any) -> bool:
         """Return True if provider returned an error indicating model not found (404)."""
         if not response or getattr(response, "finish_reason", "") != "error":
@@ -394,11 +432,16 @@ class AgentLoop:
                     reasoning_content=response.reasoning_content,
                 )
 
-                for tool_call in response.tool_calls:
+                deduped = self._dedupe_tool_calls(response.tool_calls)
+                for tool_call, skip in deduped:
                     tools_used.append(tool_call.name)
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
-                    logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    if skip:
+                        logger.info("Tool call (deduped): {}({})", tool_call.name, args_str[:200])
+                        result = "(skipped — duplicate or subsumed by another call)"
+                    else:
+                        logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
+                        result = await self.tools.execute(tool_call.name, tool_call.arguments)
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )

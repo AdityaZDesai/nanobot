@@ -207,6 +207,8 @@ class AgentDefaults(Base):
     workspace: str = "~/.nanobot/workspace"
     model: str = "anthropic/claude-opus-4-5"
     provider: str = "auto"  # Provider name (e.g. "anthropic", "openrouter") or "auto" for auto-detection
+    fallback_models: list[str] = Field(default_factory=list)  # Ordered fallback chain: ["provider/model", ...]
+    model_tiers: dict[str, str] = Field(default_factory=dict)  # Difficulty-based routing: {"easy": "...", "medium": "...", "hard": "...", "expert": "..."}
     max_tokens: int = 8192
     temperature: float = 0.1
     max_tool_iterations: int = 40

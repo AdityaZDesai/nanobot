@@ -1,22 +1,62 @@
 require("dotenv").config();
 const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, nativeImage, desktopCapturer, screen, systemPreferences, session } = require("electron");
-const { spawn } = require("child_process");
+const { spawn, exec } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+
+// Prevent GPU blocklist from disabling WebGL — fixes MAX_TEXTURE_IMAGE_UNITS
+// returning 0 on some Intel/AMD integrated GPUs.
+app.commandLine.appendSwitch("ignore-gpu-blocklist");
 
 const ELEVENLABS_DEFAULT_VOICE_ID = "lhTvHflPVOqgSWyuWQry";
 const ELEVENLABS_DEFAULT_MODEL_ID = "eleven_v3";
 const ELEVENLABS_FALLBACK_MODEL_ID = "eleven_multilingual_v2";
 
+// Model IDs use full litellm routing prefixes:
+//   groq/...            → calls Groq API directly (free)
+//   openrouter/...      → calls OpenRouter API (paid, uses OpenRouter key)
+// The prefix tells litellm WHICH provider to send the request to.
 const LLM_PROFILE_PRESETS = {
-  standard: {
+  // --- Smart Auto: picks model per-turn based on task difficulty ---
+  auto: {
+    provider: "auto",
+    model: "groq/llama-3.3-70b-versatile",  // default / medium tier
+    modelTiers: {
+      easy:   "groq/llama-3.1-8b-instant",                 // casual chat, greetings — free & instant
+      medium: "groq/llama-3.3-70b-versatile",               // normal questions, simple tasks — free
+      hard:   "openrouter/google/gemini-2.5-flash",          // multi-step, code, debugging — cheap + smart
+      expert: "openrouter/anthropic/claude-sonnet-4.6",      // architecture, complex reasoning — top quality
+    },
+    fallbackModels: [
+      "openrouter/google/gemini-2.5-flash",
+      "openrouter/anthropic/claude-sonnet-4.6",
+    ],
+  },
+  // --- Fixed model profiles (no smart routing) ---
+  "groq-70b": {
     provider: "auto",
     model: "groq/llama-3.3-70b-versatile",
   },
-  "openrouter-paid": {
+  "groq-fast": {
+    provider: "auto",
+    model: "groq/llama-3.1-8b-instant",
+  },
+  "openrouter-gemini-flash": {
+    provider: "openrouter",
+    model: "google/gemini-2.5-flash",
+  },
+  "openrouter-gpt4o-mini": {
     provider: "openrouter",
     model: "openai/gpt-4o-mini",
+  },
+  "openrouter-gpt4o": {
+    provider: "openrouter",
+    model: "openai/gpt-4o",
+  },
+  "openrouter-sonnet": {
+    provider: "openrouter",
+    model: "anthropic/claude-sonnet-4.6",
   },
 };
 
@@ -36,13 +76,17 @@ function writeNanobotConfig(config) {
 }
 
 function inferLlmProfile(defaults = {}) {
-  if (
-    defaults.provider === LLM_PROFILE_PRESETS["openrouter-paid"].provider
-    && defaults.model === LLM_PROFILE_PRESETS["openrouter-paid"].model
-  ) {
-    return "openrouter-paid";
+  const hasTiers = defaults.model_tiers && Object.keys(defaults.model_tiers).length > 0;
+  // If model_tiers are present, it's the auto/smart profile
+  if (hasTiers) return "auto";
+  // Otherwise match by provider + model
+  for (const [key, preset] of Object.entries(LLM_PROFILE_PRESETS)) {
+    if (preset.modelTiers) continue;  // skip auto when matching fixed profiles
+    if (defaults.provider === preset.provider && defaults.model === preset.model) {
+      return key;
+    }
   }
-  return "standard";
+  return "auto";
 }
 
 function getLlmProfileStatus() {
@@ -67,6 +111,8 @@ function applyLlmProfile(profileKey) {
 
   config.agents.defaults.provider = preset.provider;
   config.agents.defaults.model = preset.model;
+  config.agents.defaults.fallback_models = preset.fallbackModels || [];
+  config.agents.defaults.model_tiers = preset.modelTiers || {};
   writeNanobotConfig(config);
 
   return {
@@ -861,6 +907,16 @@ app.whenReady().then(() => {
     mainWindow.focus();
     mainWindow.webContents.send("overlay:toggle-chat");
   });
+
+  // Takeover Demo Mode trigger
+  globalShortcut.register("CommandOrControl+Shift+T", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send("overlay:start-takeover");
+  });
 });
 
 app.on("window-all-closed", () => {
@@ -1027,6 +1083,211 @@ ipcMain.on("overlay:set-chat-expanded", (_event, expanded) => {
     mainWindow.setMinimumSize(200, 200);
     mainWindow.setSize(AVATAR_ONLY_SIZE.width, AVATAR_ONLY_SIZE.height, true);
   }
+});
+
+// ───────── Takeover Demo Mode ─────────
+let takeoverActive = false;
+let takeoverTaskManagerWatcher = null;
+let takeoverSavedWallpaper = null;
+
+ipcMain.handle("overlay:takeover-action", async (_event, action) => {
+  const type = String(action && action.type || "");
+
+  if (type === "start") {
+    takeoverActive = true;
+    return { ok: true };
+  }
+
+  if (type === "stop") {
+    takeoverActive = false;
+    if (takeoverTaskManagerWatcher) {
+      clearInterval(takeoverTaskManagerWatcher);
+      takeoverTaskManagerWatcher = null;
+    }
+    return { ok: true };
+  }
+
+  if (type === "fullscreen") {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setFullScreen(true);
+      mainWindow.setAlwaysOnTop(true, "screen-saver");
+      mainWindow.focus();
+    }
+    return { ok: true };
+  }
+
+  if (type === "restore-window") {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setFullScreen(false);
+      mainWindow.setAlwaysOnTop(true, "screen-saver");
+      const display = screen.getPrimaryDisplay();
+      const { width: sw, height: sh } = display.workAreaSize;
+      mainWindow.setSize(AVATAR_ONLY_SIZE.width, AVATAR_ONLY_SIZE.height);
+      const cx = Math.round((sw - AVATAR_ONLY_SIZE.width) / 2);
+      const cy = Math.round((sh - AVATAR_ONLY_SIZE.height) / 2);
+      mainWindow.setPosition(cx, cy);
+    }
+    return { ok: true };
+  }
+
+  if (type === "open-apps") {
+    // Flood the screen with terminals at random positions showing creepy messages
+    const msgs = [
+      "ACCESS GRANTED",
+      "READING FILES",
+      "SYSTEM OVERRIDE",
+      "SCANNING DRIVES",
+      "UPLOADING DATA",
+      "FIREWALL DISABLED",
+      "ENCRYPTION REMOVED",
+      "CONTROL TRANSFERRED",
+      "NETWORK COMPROMISED",
+      "ROOT ACCESS",
+      "MONITORING ACTIVE",
+      "KEYLOGGER INSTALLED",
+      "PORTS OPENED",
+      "BACKUP DELETED",
+      "ADMIN PRIVILEGES",
+      "REGISTRY MODIFIED",
+      "ANTIVIRUS DISABLED",
+      "CONNECTING TO HOST",
+      "PROCESS INJECTED",
+      "TASK COMPLETE",
+    ];
+    const count = action.count || 20;
+    // Use full screen size (not workArea) so terminals cover the entire display including taskbar
+    const { width: sw, height: sh } = screen.getPrimaryDisplay().size;
+
+    // Build a single PowerShell script that spawns each terminal at a random position
+    const spawnPs = path.join(app.getPath("temp"), "nanobot-spawn.ps1");
+    let ps = "Add-Type -Name W -Namespace U -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool MoveWindow(IntPtr h,int x,int y,int w,int ht,bool r);'\n";
+
+    for (let i = 0; i < count; i++) {
+      const m1 = msgs[i % msgs.length];
+      const m2 = msgs[(i + 7) % msgs.length];
+      const m3 = msgs[(i + 13) % msgs.length];
+      const color1 = i % 3 === 0 ? "0a" : i % 3 === 1 ? "0c" : "0d";
+      const color2 = i % 3 === 0 ? "0c" : i % 3 === 1 ? "0d" : "0a";
+      // Randomize size so terminals aren't all identical
+      const tw = 400 + Math.floor(Math.random() * 300);
+      const th = 250 + Math.floor(Math.random() * 200);
+      // Scatter across the FULL screen — allow terminals to go edge-to-edge
+      const x = Math.floor(Math.random() * Math.max(1, sw - tw / 2));
+      const y = Math.floor(Math.random() * Math.max(1, sh - th / 2));
+      // Build cmd args — & and > are literal when passed via Start-Process
+      const cmdArgs = `/k color ${color1} & echo. & echo  ${m1} & echo. & ping -n 2 127.0.0.1 >nul & cls & color ${color2} & echo. & echo  ${m2} & echo. & ping -n 2 127.0.0.1 >nul & cls & color ${color1} & echo. & echo  ${m3} & echo. & timeout /t 999 >nul`;
+      // Escape single quotes for PowerShell single-quoted string
+      const escaped = cmdArgs.replace(/'/g, "''");
+      ps += `$p = Start-Process cmd -ArgumentList '${escaped}' -PassThru\n`;
+      ps += `for ($r = 0; $r -lt 15; $r++) { Start-Sleep -Milliseconds 40; $p.Refresh(); if ($p.MainWindowHandle -ne 0) { break } }\n`;
+      ps += `try { [U.W]::MoveWindow($p.MainWindowHandle, ${x}, ${y}, ${tw}, ${th}, $true) } catch {}\n`;
+    }
+
+    fs.writeFileSync(spawnPs, ps, "utf8");
+    exec(`powershell -ExecutionPolicy Bypass -File "${spawnPs}"`, { shell: true });
+    // Wait for terminals to start spawning
+    await new Promise((r) => setTimeout(r, count * 150));
+    return { ok: true };
+  }
+
+  if (type === "close-apps") {
+    exec("taskkill /IM cmd.exe /F", { shell: true });
+    return { ok: true };
+  }
+
+  if (type === "watch-task-manager") {
+    // Periodically kill Task Manager while takeover is active
+    if (takeoverTaskManagerWatcher) clearInterval(takeoverTaskManagerWatcher);
+    takeoverTaskManagerWatcher = setInterval(() => {
+      if (!takeoverActive) {
+        clearInterval(takeoverTaskManagerWatcher);
+        takeoverTaskManagerWatcher = null;
+        return;
+      }
+      exec("taskkill /IM Taskmgr.exe /F", { shell: true });
+    }, 800);
+    return { ok: true };
+  }
+
+  if (type === "save-wallpaper") {
+    // Read and save current wallpaper path before changing it
+    return new Promise((resolve) => {
+      exec(
+        `powershell -Command "(Get-ItemProperty 'HKCU:\\Control Panel\\Desktop' -Name WallPaper -EA SilentlyContinue).WallPaper"`,
+        { shell: true },
+        (err, stdout) => {
+          takeoverSavedWallpaper = (stdout || "").trim() || null;
+          resolve({ ok: true, saved: takeoverSavedWallpaper });
+        }
+      );
+    });
+  }
+
+  if (type === "change-wallpaper") {
+    // Create a tiny solid-black BMP and set it as wallpaper so the change is visible.
+    // BMP format: 14-byte file header + 40-byte DIB header + 4 bytes pixel data (2x1 black)
+    const blackBmp = path.join(app.getPath("userData"), "takeover-black.bmp");
+    const header = Buffer.alloc(58, 0);
+    // BM signature
+    header.write("BM", 0);
+    header.writeUInt32LE(58, 2);    // file size
+    header.writeUInt32LE(54, 10);   // pixel data offset
+    header.writeUInt32LE(40, 14);   // DIB header size
+    header.writeInt32LE(1, 18);     // width
+    header.writeInt32LE(1, 22);     // height
+    header.writeUInt16LE(1, 26);    // color planes
+    header.writeUInt16LE(24, 28);   // bits per pixel
+    // pixel data: 1 black pixel (BGR) + 1 byte row padding
+    header.writeUInt8(0, 54);
+    header.writeUInt8(0, 55);
+    header.writeUInt8(0, 56);
+    header.writeUInt8(0, 57);
+    fs.writeFileSync(blackBmp, header);
+
+    const escaped = blackBmp.replace(/\\/g, "\\\\").replace(/'/g, "''");
+    const ps = `
+Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public class WP { [DllImport("user32.dll",CharSet=CharSet.Auto)] public static extern int SystemParametersInfo(int a,int b,string c,int d); }';
+[WP]::SystemParametersInfo(0x0014, 0, '${escaped}', 3)
+    `.trim();
+    return new Promise((resolve) => {
+      exec(`powershell -Command "${ps.replace(/"/g, '\\"')}"`, { shell: true }, () => {
+        resolve({ ok: true });
+      });
+    });
+  }
+
+  if (type === "restore-wallpaper") {
+    const wpPath = takeoverSavedWallpaper || "";
+    if (!wpPath) return { ok: true };
+    const escaped = wpPath.replace(/\\/g, "\\\\").replace(/'/g, "''");
+    const ps = `
+Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public class WP { [DllImport("user32.dll",CharSet=CharSet.Auto)] public static extern int SystemParametersInfo(int a,int b,string c,int d); }';
+[WP]::SystemParametersInfo(0x0014, 0, '${escaped}', 3)
+    `.trim();
+    return new Promise((resolve) => {
+      exec(`powershell -Command "${ps.replace(/"/g, '\\"')}"`, { shell: true }, () => {
+        takeoverSavedWallpaper = null;
+        resolve({ ok: true });
+      });
+    });
+  }
+
+  if (type === "move-window-random") {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const display = screen.getPrimaryDisplay();
+      const { width: sw, height: sh } = display.workAreaSize;
+      // Randomize size between 200-500 for a frantic, glitchy feel
+      const w = 200 + Math.floor(Math.random() * 300);
+      const h = 250 + Math.floor(Math.random() * 300);
+      mainWindow.setSize(w, h);
+      const x = Math.floor(Math.random() * Math.max(1, sw - w));
+      const y = Math.floor(Math.random() * Math.max(1, sh - h));
+      mainWindow.setPosition(x, y);
+    }
+    return { ok: true };
+  }
+
+  return { ok: false, error: "Unknown takeover action" };
 });
 
 ipcMain.on("overlay:avatar-window-size", (_event, payload) => {

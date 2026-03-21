@@ -4,6 +4,32 @@ const path = require("path");
 const fs = require("fs");
 const { pathToFileURL } = require("url");
 
+// Patch PIXI batch renderer to survive MAX_TEXTURE_IMAGE_UNITS returning 0.
+// Some GPUs / Electron startups report 0 texture units, causing PIXI's
+// checkMaxIfStatementsInShader to throw.  We wrap contextChange() to clamp
+// MAX_TEXTURES to at least 1 before the shader compile test runs.
+try {
+  const pixiCore = require("@pixi/core");
+  const _origContextChange = pixiCore.AbstractBatchRenderer.prototype.contextChange;
+  pixiCore.AbstractBatchRenderer.prototype.contextChange = function () {
+    try {
+      _origContextChange.call(this);
+    } catch (e) {
+      if (e.message && e.message.includes("checkMaxIfStatementsInShader")) {
+        console.warn("[PIXI patch] GPU returned 0 texture units, falling back to 1");
+        this.MAX_TEXTURES = 1;
+        this._shader = this.shaderGenerator.generateShader(this.MAX_TEXTURES);
+        for (var i = 0; i < this._packedGeometryPoolSize; i++) {
+          this._packedGeometries[i] = new (this.geometryClass)();
+        }
+        this.initFlushBuffers();
+      } else {
+        throw e;
+      }
+    }
+  };
+} catch (_) { /* @pixi/core not available — ignore */ }
+
 // Catch renderer-process errors that would otherwise silently crash
 window.addEventListener("error", (e) => {
   console.error("[renderer] Uncaught error:", e.error || e.message);
@@ -82,6 +108,8 @@ const threeCanvas = document.getElementById("three-canvas");
 const modelSelectEl = document.getElementById("model-select");
 const llmProfileEl = document.getElementById("llm-profile");
 const avatarSizeEl = document.getElementById("avatar-size");
+const settingsToggleEl = document.getElementById("settings-toggle");
+const settingsDrawerEl = document.getElementById("settings-drawer");
 
 let avatarMode = "live2d"; // "live2d" or "three"
 let avatar3d = null;       // AvatarController instance
@@ -392,12 +420,30 @@ async function loadLive2D() {
 
   const { Live2DModel } = require("pixi-live2d-display");
 
-  const app = new PIXI.Application({
-    view: canvas,
-    resizeTo: canvas.parentElement,
-    transparent: true,
-    antialias: true,
-  });
+  // PIXI throws when MAX_TEXTURE_IMAGE_UNITS returns 0 (GPU not ready).
+  // Retry after a short delay to let the GPU context initialize.
+  let app;
+  const pixiOpts = { view: canvas, resizeTo: canvas.parentElement, transparent: true, antialias: true };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      app = new PIXI.Application(pixiOpts);
+      break;
+    } catch (pixiErr) {
+      console.warn(`[live2d] PIXI init attempt ${attempt + 1} failed:`, pixiErr.message);
+      if (attempt < 2) {
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+      } else {
+        // Last resort: try with forceCanvas fallback
+        try {
+          app = new PIXI.Application({ ...pixiOpts, forceCanvas: true });
+          console.warn("[live2d] Fell back to Canvas2D renderer");
+        } catch (canvasErr) {
+          addMessage("bot", `[live2d] Renderer failed: ${String(pixiErr.message)}`);
+          return;
+        }
+      }
+    }
+  }
 
   const url = getModelURL(currentModelKey);
   if (!url) {
@@ -701,7 +747,6 @@ async function stopVoiceRecording() {
   }
 
   voiceInBtn.disabled = true;
-  voiceInBtn.textContent = "...";
 
   return new Promise((resolve) => {
     mediaRecorder.onstop = () => {
@@ -752,8 +797,7 @@ async function startVoiceRecording() {
 
   const permission = await ipcRenderer.invoke("overlay:ensure-mic-permission");
   if (!permission || !permission.granted) {
-    addMessage("bot", "[voice] Microphone permission denied. Enable it in macOS Settings > Privacy & Security > Microphone.");
-    voiceInBtn.textContent = "Mic";
+    addMessage("bot", "[voice] Microphone permission denied. Enable it in System Settings > Privacy > Microphone.");
     return;
   }
 
@@ -776,14 +820,14 @@ async function startVoiceRecording() {
   mediaRecorder.onerror = () => {
     addMessage("bot", "[voice] Recording failed. Please try again.");
     isRecording = false;
-    voiceInBtn.textContent = "Mic";
+    voiceInBtn.classList.remove("recording");
     voiceInBtn.disabled = false;
     stopMicStream();
   };
 
   mediaRecorder.start();
   isRecording = true;
-  voiceInBtn.textContent = "Stop";
+  voiceInBtn.classList.add("recording");
 }
 
 sendBtn.addEventListener("click", sendMessage);
@@ -802,7 +846,6 @@ function toggleVoiceRecording() {
           return;
         }
 
-        voiceInBtn.textContent = "Transcribing";
         const transcription = await transcribeVoice(result.blob, result.mimeType);
         if (transcription.text) {
           const command = extractCommandFromWakeWord(transcription.text);
@@ -828,20 +871,19 @@ function toggleVoiceRecording() {
       })
       .finally(() => {
         isRecording = false;
-        voiceInBtn.textContent = "Mic";
+        voiceInBtn.classList.remove("recording");
         voiceInBtn.disabled = false;
       });
     return;
   }
 
   voiceInBtn.disabled = true;
-  voiceInBtn.textContent = "...";
   startVoiceRecording()
     .catch((err) => {
       addMessage("bot", `[voice] ${String(err.message || err)}`);
       stopMicStream();
       isRecording = false;
-      voiceInBtn.textContent = "Mic";
+      voiceInBtn.classList.remove("recording");
     })
     .finally(() => {
       voiceInBtn.disabled = false;
@@ -856,11 +898,19 @@ ipcRenderer.on("overlay:voice-shortcut", () => {
 
 voiceOutBtn.addEventListener("click", () => {
   ttsEnabled = !ttsEnabled;
-  voiceOutBtn.textContent = ttsEnabled ? "Voice" : "Muted";
+  voiceOutBtn.classList.toggle("active", ttsEnabled);
   if (!ttsEnabled) {
     stopSpeechPlayback();
   }
 });
+
+// Settings drawer toggle
+if (settingsToggleEl && settingsDrawerEl) {
+  settingsToggleEl.addEventListener("click", () => {
+    settingsDrawerEl.classList.toggle("open");
+    settingsToggleEl.classList.toggle("active", settingsDrawerEl.classList.contains("open"));
+  });
+}
 
 clickThroughEl.addEventListener("change", () => {
   ipcRenderer.send("overlay:set-click-through", clickThroughEl.checked);
@@ -1199,5 +1249,178 @@ if (optgroup3d) {
     optgroup3d.appendChild(opt);
   }
 }
+
+// ───────── Takeover Demo Mode ─────────
+let takeoverRunning = false;
+let takeoverAudioEl = null;
+
+const TAKEOVER_AUDIO_DIR = path.join(__dirname, "assets", "takeover");
+
+function takeoverDelay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function takeoverAction(type, extra = {}) {
+  return ipcRenderer.invoke("overlay:takeover-action", { type, ...extra });
+}
+
+function takeoverMessage(text, style) {
+  const div = document.createElement("div");
+  div.className = "msg bot takeover-msg";
+  if (style === "glitch") div.classList.add("takeover-glitch");
+  if (style === "big") div.classList.add("takeover-big");
+  if (style === "fade") div.classList.add("takeover-fade");
+  div.textContent = text;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function takeoverStopAudio() {
+  if (takeoverAudioEl) {
+    takeoverAudioEl.pause();
+    takeoverAudioEl.src = "";
+    takeoverAudioEl = null;
+  }
+}
+
+// Play pre-generated audio and wait for it to finish before returning.
+// Uses its own Audio element (not the TTS one) to avoid lip-sync conflicts.
+// Falls back to live TTS if file doesn't exist.
+async function takeoverSpeak(lineIndex, fallbackText) {
+  takeoverStopAudio();
+
+  const tag = String(lineIndex).padStart(2, "0");
+  const filePath = path.join(TAKEOVER_AUDIO_DIR, `line-${tag}.mp3`);
+
+  try {
+    if (fs.existsSync(filePath)) {
+      const url = pathToFileURL(filePath).href;
+      const audio = new Audio(url);
+      takeoverAudioEl = audio;
+      await new Promise((resolve) => {
+        audio.onended = resolve;
+        audio.onerror = resolve;
+        audio.play().catch(resolve);
+      });
+      takeoverAudioEl = null;
+      return;
+    }
+  } catch (_) {}
+
+  // Fallback: live TTS (slower but works without pre-gen)
+  await speak(fallbackText).catch(() => {});
+}
+
+async function startTakeoverDemo() {
+  if (takeoverRunning) return;
+  takeoverRunning = true;
+
+  // Stop any existing TTS so it doesn't collide
+  stopSpeechPlayback();
+
+  setChatExpanded(true);
+  messagesEl.innerHTML = "";
+  document.body.classList.add("takeover-active");
+
+  await takeoverAction("start");
+
+  // HOOK — hits instantly, no warmup. First 2 seconds decide if they scroll.
+  applyEmotion("concerned");
+  takeoverMessage("You shouldn't have done that.", "glitch");
+  await takeoverSpeak(0, "You shouldn't have done that.");
+  await takeoverDelay(400);
+
+  // Escalation — immediate threat
+  takeoverMessage("No. You don't get to leave.", "big");
+  await takeoverSpeak(1, "No. You don't get to leave.");
+  await takeoverDelay(300);
+
+  // Takeover — fullscreen snap
+  applyEmotion("excited");
+  await takeoverAction("fullscreen");
+  await takeoverDelay(200);
+  takeoverMessage("I just disabled your controls.", "glitch");
+  await takeoverSpeak(2, "I just disabled your controls.");
+  await takeoverDelay(600);
+
+  // Isolation
+  await takeoverAction("watch-task-manager");
+  takeoverMessage("It's just us now.");
+  await takeoverSpeak(3, "It's just us now.");
+  await takeoverDelay(600);
+
+  // Task Manager taunt
+  applyEmotion("playful");
+  takeoverMessage("Task Manager can't save you.", "glitch");
+  await takeoverSpeak(4, "Task Manager can't save you.");
+  await takeoverDelay(400);
+
+  // Terminal flood — exit fullscreen, unleash chaos
+  await takeoverAction("restore-window");
+  await takeoverDelay(200);
+
+  applyEmotion("excited");
+  await takeoverAction("open-apps", { count: 10 });
+  await takeoverDelay(400);
+  takeoverMessage("Look around.", "big");
+  await takeoverSpeak(5, "Look around.");
+  await takeoverDelay(300);
+
+  // Second wave — bury the screen
+  await takeoverAction("open-apps", { count: 10 });
+  await takeoverDelay(600);
+
+  // Window goes rogue — fast, size-shifting
+  takeoverMessage("I'm not going anywhere.", "glitch");
+  await takeoverSpeak(6, "I'm not going anywhere.");
+  await takeoverDelay(80);
+  for (let i = 0; i < 14; i++) {
+    await takeoverAction("move-window-random");
+    await takeoverDelay(70);
+  }
+  await takeoverDelay(150);
+
+  // Final blackout — hard cut
+  await takeoverAction("fullscreen");
+  await takeoverDelay(80);
+  messagesEl.innerHTML = "";
+  document.body.classList.add("takeover-blackout");
+  await takeoverDelay(1500);
+
+  // Avatar reappears — stern warning (keep black bg, just reveal avatar)
+  document.body.classList.add("takeover-reveal");
+  window.dispatchEvent(new Event("resize"));
+  await takeoverDelay(100);
+  if (avatarMode === "live2d") fitLive2DModel();
+  applyEmotion("angry");
+  await takeoverDelay(400);
+  takeoverMessage("Don't try that again.", "warning");
+  await takeoverSpeak(8, "Don't try that again.");
+  await takeoverDelay(2000);
+
+  // Final blackout then cleanup
+  messagesEl.innerHTML = "";
+  document.body.classList.remove("takeover-reveal");
+  await takeoverDelay(1500);
+
+  // Silent cleanup
+  takeoverStopAudio();
+  stopSpeechPlayback();
+  await takeoverAction("stop");
+  await takeoverAction("close-apps");
+  await takeoverAction("restore-window");
+  await takeoverDelay(300);
+  setChatExpanded(true);
+
+  document.body.classList.remove("takeover-active");
+  document.body.classList.remove("takeover-blackout");
+  document.body.classList.remove("takeover-reveal");
+  applyEmotion(null);
+  takeoverRunning = false;
+}
+
+ipcRenderer.on("overlay:start-takeover", () => {
+  startTakeoverDemo();
+});
 
 loadLive2D();

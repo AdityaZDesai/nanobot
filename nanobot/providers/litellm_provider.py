@@ -101,7 +101,8 @@ class LiteLLMProvider(LLMProvider):
         spec = find_by_model(model)
         if spec and spec.litellm_prefix:
             model = self._canonicalize_explicit_prefix(model, spec.name, spec.litellm_prefix)
-            if not any(model.startswith(s) for s in spec.skip_prefixes):
+            already_prefixed = model.startswith(f"{spec.litellm_prefix}/")
+            if not already_prefixed and not any(model.startswith(s) for s in spec.skip_prefixes):
                 model = f"{spec.litellm_prefix}/{model}"
 
         return model
@@ -313,6 +314,23 @@ class LiteLLMProvider(LLMProvider):
         if tool_call_count >= 2 and turn_slice and turn_slice[-1].get("role") == "tool":
             score += 1
 
+        # ── Vision detection ──
+        # If any message contains image content, bump to at least "hard"
+        # so a vision-capable model (Gemini, Claude, GPT-4o) is used
+        # instead of a text-only model that would discard the images.
+        has_images = False
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") in ("image_url", "image"):
+                        has_images = True
+                        break
+            if has_images:
+                break
+        if has_images:
+            score = max(score, 3)  # at least "hard" tier
+
         # Map score to tier.
         # easy is only reached via the greeting fast-path above.
         # Everything else defaults to medium at minimum.
@@ -402,6 +420,9 @@ class LiteLLMProvider(LLMProvider):
             "connection reset",
             "overloaded",
             "capacity",
+            "not found",
+            "404",
+            "does not exist",
         ))
 
     async def _chat_single(
